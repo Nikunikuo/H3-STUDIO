@@ -1,0 +1,10 @@
+{
+  "prompt": "A tiny red robot walks across a wooden desk. Soft footsteps and a quiet mechanical hum are heard.",
+  "seed": 42,
+  "width": 320,
+  "height": 192,
+  "num_frames": 124,
+  "num_inference_steps": 2,
+  "fps": 24,
+  "output": "outputs/smoke/minimax_h3_smoke.mp4"
+}
