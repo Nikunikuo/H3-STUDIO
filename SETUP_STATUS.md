@@ -1,5 +1,8 @@
 # SETUP STATUS
 
+> [!IMPORTANT]
+> 現行HEADの実行経路は、`community`／`raw_en`から`native_clean`のComfyUI native H3 nodesへ渡す構成だけです。本書は再現性のため過去の測定結果も削らず保持しています。「履歴」「Legacy」「旧」と明記したDiffusers、Context-IR、`direct`／`official_en`、LFM、tokenizer互換のコード・モデル・セットアップ導線は現行HEADから削除済みで、このcheckoutから再実行できません。
+
 ## Current ComfyUI route
 
 - 状態: ComfyUI native backendへの移行完了。browser UI→private pinned ComfyUI child→H.264/AAC出力・全decodeまで実E2E成功。旧Diffusers結果は比較記録として保持
@@ -14,7 +17,7 @@
 - ComfyUI SHA: `14b05228cef127ce529bc0c08660770d4af3e9a8`
 - workflow templates参照元SHA: `7653f1cdef1d92394b6ef9946018c0a8aa4136b8`（設計の出典。通常setupでは未使用のcheckoutを作らない）
 - Comfy向けモデル: `Comfy-Org/MiniMax-H3` revision `0543966fbdce5ba05709a8f2031c94bdba629b4a`
-- Legacy Diffusers SHA: `abc5e9bf71fd38f53cd471bc3acaa84bc5ecbfdc`
+- 履歴資料のLegacy Diffusers SHA: `abc5e9bf71fd38f53cd471bc3acaa84bc5ecbfdc`（現行HEADの依存ではない）
 - GPU: NVIDIA GeForce RTX 5090 32GB
 - RAM: 約253GiB
 - Cドライブ空き: 約3.48TB（構築開始時）
@@ -35,19 +38,21 @@
 - Browser E2E: `320×192`／124 frames／Draft 8／EasyCache OFF、初回PyTorchを含むtotal 86.031秒。5.167秒、H.264 124 frames＋AAC 331,776 total samples（165,888／channel）／32kHz stereoを全decode
 - Sage標準browser E2E: fresh private childでtotal 44.422秒（Comfy prompt 36.51秒、起動6.813秒、denoise 19秒、Video VAE 6.10秒、全decode検証0.110秒）。`backend=comfy`／`attention_backend=sage`をjobへ保存し、UIにも表示
 - 実キャラクター2画像Omni E2E: 各1448×1086の設定画を`<Picture 1>`／`<Picture 2>`、高精度`max`で入力。Job Object／listener ownership安定化後の最終試験は`320×192`／124 frames／Draft 8／EasyCache OFF、total 34.375秒（Comfy prompt 28.047秒、起動6.079秒、検証0.125秒）。5.167秒、H.264 124 frames＋AAC 331,776 total samples（165,888／channel）／32kHz stereoを全decode。2人の主要な外見上の差を保った動きを目視確認。低解像度Draftなので細部同一性の品質保証には使用しない
-- 音声参照なしraw dialogue baseline Omni E2E: 指定されたミルちゃん／ハミちゃん設定画2枚を`match`参照し、自然な日本語Cut本文`<Picture 1>の女性は低く落ち着いた女性の声で「こんにちは。」と一度だけ言う。`を決定論的formatterへ入力。job `6c89d54523eb`、`320×192`／124 frames／20 steps／EasyCache OFF／`auto→simple`、total 58.282秒（Comfy prompt 50.15秒、denoise約34秒、起動6.844秒、検証0.078秒）。329,657 bytes／5.167秒、H.264 124 frames＋AAC 32kHz stereo 331,776 total samplesを全decode。実音声のactive segmentは3.34～4.20秒の1区間だけで、Whisper tiny日本語ASRは正確に`こんにちは`、追加制御文・連続ナレーション・謎言語なし
-- direct日本語＋standalone Audio原因A/B: 同じミルちゃん／ハミちゃん2画像、同じ日本語prompt、`672×384`／124 frames／20 steps／seed `1650701047`で比較。Whisper tiny日本語ASRは、参照元`12.mp3`が`はいつなまよ、マヨネージです`、AudioをRef2VAへ渡したjob `a3a00555aba7`が`はいつなまよ、マヨネージです!`、Audioだけ外したjob `bc799270a65e`が`こんにちは`だった。Audioありはtotal 228.641秒で屋内背景・長い口動作、Audioなしはtotal 162.641秒で屋外ベンチ・固定正面・手振りへ改善。両方とも5.167秒、H.264 672×384 124 frames＋AAC 32kHz stereoを全decode。この同seed A/Bにより、日本語直渡しではなく全波形Audio条件が主因と判定
-- `dialogue_priority`実ルートE2E: 同じ2画像、同じ`12.mp3`添付、同じ日本語prompt／`672×384`／124 frames／20 steps／seed `1650701047`でjob `64a716138f74`を生成。元添付は`image,image,audio`で監査保存し、実行用`references`は`image,image`、`standalone_audio_conditioning=false`、実効文のAudio tag 0件、native台詞1件を確認。total 110.938秒（generation 99.078秒、startup 11.375秒）、306,246 bytes／5.167秒、H.264 672×384 124 frames＋AAC 32kHz stereoを全decode。Whisper tinyは日本語固定／自動判定とも`こんにちは`。目視では2人の人物差・夏服、固定正面、左人物の手振りを維持。海そのものは明瞭でなく公園のベンチ背景になったため、音声修正の成功と構図追従の改善は確認するが、背景完全追従とは扱わない
+- 履歴・削除済みraw formatter dialogue baseline Omni E2E: 指定されたミルちゃん／ハミちゃん設定画2枚を`match`参照し、自然な日本語Cut本文`<Picture 1>の女性は低く落ち着いた女性の声で「こんにちは。」と一度だけ言う。`を当時の決定論的formatterへ入力。job `6c89d54523eb`、`320×192`／124 frames／20 steps／EasyCache OFF／`auto→simple`、total 58.282秒（Comfy prompt 50.15秒、denoise約34秒、起動6.844秒、検証0.078秒）。329,657 bytes／5.167秒、H.264 124 frames＋AAC 32kHz stereo 331,776 total samplesを全decode。実音声のactive segmentは3.34～4.20秒の1区間だけで、Whisper tiny日本語ASRは正確に`こんにちは`、追加制御文・連続ナレーション・謎言語なし。測定値は保持するが、このformatterは現行HEADから削除済み
+- 履歴・旧`direct`日本語＋standalone Audio原因A/B: 同じミルちゃん／ハミちゃん2画像、同じ日本語prompt、`672×384`／124 frames／20 steps／seed `1650701047`で比較。Whisper tiny日本語ASRは、参照元`12.mp3`が`はいつなまよ、マヨネージです`、AudioをRef2VAへ渡したjob `a3a00555aba7`が`はいつなまよ、マヨネージです!`、Audioだけ外したjob `bc799270a65e`が`こんにちは`だった。Audioありはtotal 228.641秒で屋内背景・長い口動作、Audioなしはtotal 162.641秒で屋外ベンチ・固定正面・手振りへ改善。両方とも5.167秒、H.264 672×384 124 frames＋AAC 32kHz stereoを全decode。この同seed A/Bにより、日本語直渡しではなく全波形Audio条件が主因と判定。旧`direct`入力モード自体は現行HEADから削除済み
+- 履歴・旧formatter上の`dialogue_priority`実ルートE2E: 同じ2画像、同じ`12.mp3`添付、同じ日本語prompt／`672×384`／124 frames／20 steps／seed `1650701047`でjob `64a716138f74`を生成。元添付は`image,image,audio`で監査保存し、実行用`references`は`image,image`、`standalone_audio_conditioning=false`、実効文のAudio tag 0件、native台詞1件を確認。total 110.938秒（generation 99.078秒、startup 11.375秒）、306,246 bytes／5.167秒、H.264 672×384 124 frames＋AAC 32kHz stereoを全decode。Whisper tinyは日本語固定／自動判定とも`こんにちは`。目視では2人の人物差・夏服、固定正面、左人物の手振りを維持。海そのものは明瞭でなく公園のベンチ背景になったため、音声修正の成功と構図追従の改善は確認するが、背景完全追従とは扱わない。音声条件を除外した比較結果は現行ポリシーの根拠として保持するが、当時のformatter自体は現行HEADに含まれない
 - 公開日本語成功例native baseline: note記事で配布された英語promptをbyte単位で`native_clean`へ渡し、`864×480`／124 frames／20 steps／`simple`／EasyCache OFFで`community-baseline-mayu.mp4`を生成。total 81.25秒（generation 74.11秒）、1,002,960 bytes／5.167秒、H.264 124 frames＋AAC 32kHz stereoを全decode。Whisper tinyは引用された日本語台詞だけを検出し、Storyboard制御文の読み上げなし
 - community planner実データ: 問題が再現した日本語5-Cut promptを固定Qwen3-4Bで変換。初回実測42.656秒（load 9.173秒、generation 33.456秒、1,088 input tokens、724 content tokens、EOS到達）。参照画像はidentity／face／body／hairだけ、指定したtank top＋shortsで参照衣装を上書きし、Shot順`1,2,4,5,6`、120kg／200kg、声質、普通の引用符内の日本語12文字を完全保持。日本語制御文、`<d>`、追加発話なし。同一入力はSeed／EasyCacheをcache keyから除外して再利用
 - community＋native_clean長尺Omni E2E: job `d5d77b8e52a8`、ハミちゃん設定画1枚、`864×480`／345 frames（14.375秒）／20 steps／seed `1720212229`／EasyCache OFF。作成から完了599.074秒、planner 42.484秒、engine total 556.453秒（Comfy prompt 547.98秒）。1,625,248 bytes、H.264 345 frames＋AAC 32kHz stereo 921,600 total samplesを全decode。Whisper tinyの全区間ASRは短い`あ！`、9～12秒の高RMS区間は長い`うー`系の力み声だけで、日本語制御文・Cut説明・連続ナレーションなし。12秒以降の低RMS区間で出た定型句は発話区間の約1/13の音量で、無音寄り区間のASR hallucinationとして扱う。目視ではgym、tank top＋shorts、treadmill、weights、暗転後protein drinkへ大枠追従した一方、dumbbell squat／deadlift／barbell liftの種目境界がbarbell squat系へ混ざり、参照眼鏡も消失したため、細かな動作・小物の完全追従成功とは扱わない
 - camera geometry release fix: 上記E2Eの実効promptに残った`low-angle upward`＋`positioned above`と`low-angle from above`の自己矛盾を、各Shotのframing＋camera単位で`CAMERA_DIRECTION_CONFLICT`として拒否。source `Cut N`の仰角／煽り／俯瞰は同番号`Shot N`で低位置＋上向き／高位置＋下向きの両条件を要求する。修正後の同一実データは再試行なし37.359秒でcompileし、Shot 1を低位置から上向きへ統一、台詞12文字・参照・衣装・数値を保持。cache compiler revisionを`2026-08-05-native-clean-v3-camera-geometry`へ更新し、旧cacheを再利用しない。Web UI serverもこのrevisionで再起動済み
-- 旧Context-IR比較GPU smoke: 同じ2画像、ローカルcompiler 16ms、Omni Draft 8を`auto→simple`へ解決し、total 49.234秒（generation 42.203秒、起動6.828秒、検証0.109秒）。出力`eba23d5d126e.mp4`は327,834 bytes／5.167秒／320×192、H.264 124 frames＋AAC 32kHz stereo 331,776 total samplesを全decode。指定した日本語台詞は`<d>[Japanese] こんにちは。</d>`として1回だけ実効IRへ含まれ、追加ナレーション禁止を併記
+- 履歴・削除済みContext-IR比較GPU smoke: 同じ2画像、ローカルcompiler 16ms、Omni Draft 8を`auto→simple`へ解決し、total 49.234秒（generation 42.203秒、起動6.828秒、検証0.109秒）。出力`eba23d5d126e.mp4`は327,834 bytes／5.167秒／320×192、H.264 124 frames＋AAC 32kHz stereo 331,776 total samplesを全decode。指定した日本語台詞は`<d>[Japanese] こんにちは。</d>`として1回だけ実効IRへ含まれ、追加ナレーション禁止を併記。このcompiler、`<d>` wrapper、tokenizer互換経路は現行HEADから削除済み
 - PyTorch比較: `640×384`／124 frames／20 stepsの初回Prompt 231.31秒（denoise 36.6秒、Video VAE 180.66秒）。別runはPrompt 117.88秒（EasyCache 7/20 skip・表示1.54×、Video VAE 63.34秒）
 - Sage固定server A/B: 初回compile込みPrompt 54.36秒、定常run 39.01秒。Sage＋EasyCache 0.20は39.67秒（denoise 14秒、8/20 skip・表示1.67×）でOFFと総時間同等
 - Sage出力検証: 全出力H.264 124 frames＋AACを全decode、黒画面／ノイズなし。同seed通常版と目視ほぼ同等だが、数値的・byte単位の完全一致とは扱わない
 
-## Legacy Diffusers assets and smoke tests
+## Historical: removed Legacy Diffusers assets and smoke tests
+
+以下は削除済み旧Diffusers経路の資産検証・スモーク結果です。当時の固定SHA、byte数、hash一致、失敗と修正の経緯を保持するための履歴であり、記載されたworker、download／conversion script、manifest pathは現行HEADに存在せず、現在のセットアップ対象でもありません。
 
 - Legacy上流実装: Diffusers `abc5e9bf71fd38f53cd471bc3acaa84bc5ecbfdc` をdetached checkoutで固定済み
 - 公式重みダウンロード: 完了（60/60、144,051,067,662 bytes）
@@ -72,22 +77,24 @@
 - H3 Studio process境界: Windows Job Object `KILL_ON_JOB_CLOSE`を2段で使用。親先行exit後の孤児回収、終了冪等性、ProcessJob作成失敗時のspawn禁止、cancel／runner競合で次engineを誤停止しないことを実機・unit testで確認。private Comfy health後はlistener PIDがspawn tree内であることも検査
 - H3 Studio参照UI: 素材タイプ別の公式Picture／Video／Audioタグ自動採番、並べ替え再採番、クリック挿入、参照動画の埋め込み音声は通常経路では使用しない旨、およびstandalone Audioポリシーを表示
 - H3 Studio参照精度UI: Omni専用に`高速（match）`／`高精度（max）`を選択。matchは生成canvas相当の総画素へdownscale-only、maxはupscaleせず短辺2048上限。選択値をrequest／jobへ保存し、再利用時に復元
-- H3 Studio prompt processing: 画面からの新規jobは既定の`community` plannerで、日本語自然文を固定Qwen3-4B text-only workerへ渡し、strict schemaを経て公開例型の英語`Style / Reference material / Scene / Shot / Audio`ブロックへrenderする。台詞は事前退避し、翻訳せず普通の二重引用符へ1回だけ復元。参照集合／数値／時刻／audio policy／台詞完全一致／日本語残留範囲をコードで検証し、失敗時は旧degraded IRへfallbackしない。H3には`native_clean` profileで実効promptをbyte単位のまま渡し、custom tokenizer shimを使わない。既に整えた英語を無変更で渡す公開`raw_en`と合わせ、通常画面の新規入力は2方式。旧`direct`／`official_en`／LFMは比較・後方互換用
-- H3 Studio raw監査: 元`request.json`はbyte単位で不変、派生`execution_request.json`、`prompt_processing/final_prompt.txt`、`report.json`をatomic保存。入力／出力SHA-256、除外した発話cue、自動調整を記録し、新規jobには`context_ir/`を作らない
-- H3 Studio詳細UI: compiler／入力ガード情報は通常入力画面へ出さず、完了／失敗／cancel後の「生成の詳細を見る」に実効プロンプト、自動調整、参考情報、技術情報を欠損安全に表示。旧jobも表示可能で、内容は`textContent`だけで描画
+- H3 Studio prompt processing: 画面からの新規jobは既定の`community` plannerで、日本語自然文を固定Qwen3-4B text-only workerへ渡し、strict schemaを経て公開例型の英語`Style / Reference material / Scene / Shot / Audio`ブロックへrenderする。台詞は事前退避し、翻訳せず普通の二重引用符へ1回だけ復元。参照集合／数値／時刻／audio policy／台詞完全一致／日本語残留範囲をコードで検証し、失敗時は生成前に停止する。H3には`native_clean` profileで実効promptをbyte単位のまま渡し、custom tokenizer shimを使わない。既に整えた英語を無変更で渡す公開`raw_en`と合わせ、入力方式はこの2つだけ
+- H3 Studio prompt監査: 元`request.json`はbyte単位で不変、派生`execution_request.json`、`prompt_processing/final_prompt.txt`、`report.json`をatomic保存。入力／出力SHA-256、planner revision、cache、検証診断、自動調整を記録し、削除済みcompiler用artifactは新規jobへ作らない
+- H3 Studio詳細UI: compiler／入力ガード情報は通常入力画面へ出さず、完了／失敗／cancel後の「生成の詳細を見る」に実効プロンプト、自動調整、参考情報、技術情報を欠損安全に表示し、内容は`textContent`だけで描画
 - H3 Studio解像度UI: 固定pixel一覧を縦横比（16:9／9:16／1:1／4:3／3:4）×解像度段階（Preview／SD 480p相当／HD 720p相当／Native 768p）の2軸へ変更。実width／heightはserver共通catalogから取得し、H3の32px alignmentを維持。9:16×HDの送信値`736×1312`、軽量Previewは縦横比を維持して9:16なら`384×672`、旧`640×384` jobは16:9×Preview`672×384`への最寄り復元を実ブラウザ／DOM／FormDataで確認
 - H3 Studio進捗UI: Qwen解析／参照VAE／レイアウト／denoise／映像復元／音声復元／MP4化を分離。実イベント間だけ次段階未満の上限付き推定を表示
 - H3 Studioプロンプト再利用: 成功・失敗・キャンセルを含む永続ジョブ履歴から最大20件の重複なしプロンプトと音響指示を復元
 - H3 Studio音響UI: 通常はメインプロンプトの各Cutへ台詞・声質・環境音・効果音を直接記述。音声設定は折り畳み式の任意詳細へ下げ、音の主役、BGM、台詞上書き、全体音響補足、出力音量だけを保持。実台詞だけを原文の普通の二重引用符へ局所復元し、声質・話者・停止は引用符外の英語、環境音・効果音はpositiveな具体音としてrender。台詞なし／指定台詞だけ／自動のaudio policyを明示し、曖昧な発話cueや繰り返し禁止文を生成promptへ入れない。最終出力音量はComfyUI core `AudioAdjustVolume`のraw dBゲインとして適用し、normalization／clipping preventionは行わない。+dBは元peak次第でclipし得る。各設定を永続ジョブ履歴へ保存・復元
 - H3 Studio負荷UI: `960×544`・約5秒・Draftを基準に出力側の相対負荷を表示。Omni参照は倍率外の追加負荷として明記し、軽量プレビュー設定ボタンを提供
-- H3 Studio workflow profile: 既定`native_clean`はComfyUI native H3 nodesのみを許可し、`h3_studio_compat` custom node、`<d>` marker、tokenizer改変を読み込まない。旧互換profileは過去job比較専用
+- H3 Studio workflow profile: `native_clean`のみ。ComfyUI native H3 nodesだけを許可し、custom node、`<d>` marker、tokenizer改変を読み込まない
 - H3 Studio scheduler: 非表示`auto` policyでFL2VA（Text／Image／Frames）とRef2VA（Omni）の両方を、公開ComfyUI workflowの実設定と同じ`simple`へ解決。事前解決値とworkflow metadataの一致をworkerで再検証し、requested／effective値をjob詳細へ保存。同じ2画像・同じseed・同じ実効promptの320×192／8 steps実動画A/Bで、`normal`は明瞭な未denoise色ノイズが残り、`simple`は人物・衣装・背景を正常復元。20 steps音声A/BでもRef2VA `normal`が指定台詞から逸脱したため、`normal`の自動選択を廃止
-- H3 Studio参照動画音声: raw経路では埋め込み音声を偶発的にコピーしないよう`ignore`固定。公式Ref prompt guideは、声色・リズム・感情・話し方だけを参照する場合、元音声の台詞を出力へ持ち込まないよう明示している。一方、公開ComfyUI nodeはspeaker／timbre embeddingを抽出せず、入力波形全体をAudio VAE latentとして渡す。この公開経路ではvoice-onlyを物理的に強制できないため、H3 Studioは確率的なprompt誘導として扱う。明示台詞と併用する既定`dialogue_priority`ではAudioを実行用`references`と台詞harnessから外し、元添付と除外理由は監査保存。`full_content`を明示選択した場合だけ全波形を渡し、元発話・間・場面が指定を上書きし得る診断を保存。動画音声を個別に`reference`／`reuse`へ解決する旧Context-IR機能は通常画面からは使用しない
-- 旧270件中269件成功（Windows directory symlink向け1 skip）は旧`direct`／`official_en`経路の移行前基準。community planner／`native_clean`移行後の最終件数はRepository節へ記録する
+- H3 Studio参照動画音声: raw経路では埋め込み音声を偶発的にコピーしないよう`ignore`固定。公式Ref prompt guideは、声色・リズム・感情・話し方だけを参照する場合、元音声の台詞を出力へ持ち込まないよう明示している。一方、公開ComfyUI nodeはspeaker／timbre embeddingを抽出せず、入力波形全体をAudio VAE latentとして渡す。この公開経路ではvoice-onlyを物理的に強制できないため、H3 Studioは確率的なprompt誘導として扱う。明示台詞と併用する既定`dialogue_priority`ではAudioを実行用`references`と実効promptから外し、元添付と除外理由は監査保存。`full_content`を明示選択した場合だけ全波形を渡し、元発話・間・場面が指定を上書きし得る診断を保存。動画音声を個別にspeaker／timbreだけへ分離する機能はない
+- 履歴テスト基準: 旧270件中269件成功（Windows directory symlink向け1 skip）は、削除済み`direct`／`official_en`／Context-IR経路の移行前基準。community planner／`native_clean`移行後、cleanup前の最終件数はRepository節へ記録
 - 音声仕様確認: 公開H3入力／ComfyUI H3 nodeの生成条件には、独立したvoice strength、audio guidance、生成音量パラメータはない。映像と32kHzステレオ音声を共有Transformerで共同生成し、H3 Studioの最終出力音量は共同生成後の波形へ適用するpost-processのraw dBゲイン
 - 速度差確認: Diffusers文書は960×544を1344×768より約2.3倍／step高速と記載。公式初回OSSはfull attentionのみ、sparse attentionは今後公開予定。公式SGLangのconsumer最速検証は2×RTX 5090であり、単一5090 CPU offloadとは非同条件
 
-## Legacy Diffusers measurements
+## Historical: removed Legacy Diffusers measurements
+
+以下も削除済み旧Diffusers実装の履歴です。現行のpruned int8／NVFP4-AWQ ComfyUI経路の性能値ではなく、同じcheckoutから再実行できるbenchmarkでもありません。
 
 - Web UI i2v実生成: 成功、215.86秒、5.175秒H.264＋AAC、124 video frames／331,776 audio samplesを全decode
 - Web UI Omni実生成: 成功、234.42秒、5.175秒H.264＋AAC、124 video frames、画素標準偏差57.79、331,776 audio samples、audio RMS 0.00517
@@ -108,5 +115,7 @@
 ## Repository
 
 - 公開対象: 独自コード、設定、lock、ドキュメントのみ。モデル重み、参照素材、生成物、仮想環境、上流checkout、cacheはGit対象外
-- 公開監査: tracked＋非ignore untrackedの配布候補82ファイル、約1.29MiB、10MiB超ファイルおよびモデル／動画／画像／音声binaryなし。最終commitでは必須runtime module、`prompt_planner.lock.json`、`prompt_translator.lock.json`、対応テストを漏れなく含める
-- 最新unit tests: 339件中338件成功、Windowsでdirectory symlinkを作れない環境向け1件のみskip（2026-08-05）。`git diff --check`、Node構文検査、PowerShell parser、通常起動相当`setup_comfy.ps1 -VerifyOnly -SkipModelHash`も成功
+- cleanup前公開監査（履歴）: tracked＋非ignore untrackedの配布候補82ファイル、約1.29MiB、10MiB超ファイルおよびモデル／動画／画像／音声binaryなし。当時の候補には、後に削除した旧Diffusers／Context-IR／LFM runtime、`prompt_translator.lock.json`、対応テストも含まれていた
+- cleanup前unit tests（履歴）: 339件中338件成功、Windowsでdirectory symlinkを作れない環境向け1件のみskip（2026-08-05）。`git diff --check`、Node構文検査、PowerShell parser、通常起動相当`setup_comfy.ps1 -VerifyOnly -SkipModelHash`も成功。この件数は削除済み旧経路のテストを含むため、現行HEADのtest collection件数とは扱わない
+- cleanup後公開監査（現行）: staged Git blob 43ファイル、合計690833 bytes。10MiB超ファイル、モデル／動画／画像／音声binary、symlink、既知形式のtoken／private key、開発者固有absolute pathはいずれも0件。旧実装の実行コード、専用requirements、lock、custom node、対応テストは配布物から削除済み
+- cleanup後unit tests（現行）: 133件中132件成功、Windowsでdirectory symlinkを作れない環境向け1件のみskip（2026-08-05）。staged indexだけを別の新規Git repositoryへ展開したfresh-checkout相当でも同じ133件が成功。`git diff --check`、Node構文検査、全Python compile、全PowerShell parser、通常起動相当`setup_comfy.ps1 -VerifyOnly -SkipModelHash`も成功

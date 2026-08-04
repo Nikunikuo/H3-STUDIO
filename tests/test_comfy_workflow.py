@@ -215,9 +215,9 @@ class ComfyWorkflowTests(unittest.TestCase):
         self.assertEqual(community["metadata"]["requested_easycache"], "community")
         self.assertEqual(community["metadata"]["effective_easycache"], "community")
 
-    def test_workflow_profile_is_validated_and_default_preserves_compatibility(self):
+    def test_workflow_profile_is_validated_and_defaults_to_native_clean(self):
         defaulted = build("t2v")
-        self.assertEqual(defaulted["metadata"]["workflow_profile"], "studio_compat")
+        self.assertEqual(defaulted["metadata"]["workflow_profile"], "native_clean")
         with self.assertRaisesRegex(ValueError, "workflow profile"):
             build("t2v", workflow_profile="unknown")
 

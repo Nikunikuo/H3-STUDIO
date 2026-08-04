@@ -144,6 +144,48 @@ class NativeCleanPromptTests(unittest.TestCase):
             self.assertEqual(execution["effective_prompt"], prompt)
             self.assertEqual(manager.get_job(job_id)["effective_prompt"], prompt)
 
+    def test_removed_prompt_mode_fails_closed_without_execution_request(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            manager = JobManager(Path(temporary))
+            job_id = "removed-mode"
+            job_dir = manager.jobs_dir / job_id
+            job_dir.mkdir(parents=True)
+            request_path = job_dir / "request.json"
+            request_path.write_text(
+                json.dumps(
+                    {
+                        "id": job_id,
+                        "mode": "t2v",
+                        "prompt": "A girl waves.",
+                        "prompt_processing_mode": "direct",
+                        "prompt_processing": {"mode": "raw_guarded"},
+                        "references": [],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            manager.submit(
+                {
+                    "id": job_id,
+                    "status": "running",
+                    "progress": 1,
+                    "prompt": "A girl waves.",
+                }
+            )
+
+            execution_path = manager._prepare_effective_prompt(  # noqa: SLF001
+                job_id, request_path
+            )
+
+            self.assertIsNone(execution_path)
+            self.assertFalse((job_dir / "execution_request.json").exists())
+            job = manager.get_job(job_id)
+            self.assertEqual(job["status"], "failed")
+            self.assertEqual(
+                job["prompt_processing"]["error_code"],
+                "LEGACY_PROMPT_MODE_REMOVED",
+            )
+
     def test_community_cache_accepts_only_current_fully_validated_envelopes(self) -> None:
         prompt = (
             "Style: soft cel animation.\n"

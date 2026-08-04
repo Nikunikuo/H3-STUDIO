@@ -926,14 +926,13 @@ def prepare_planner_input(
             replacement_text = f"supplied audio reference number {reference.index}"
         replacements.append(_Replacement(match.start(), match.end(), replacement_text))
 
-    # Subject tags belong to the old Context-IR/native-tag harness. The clean
-    # community compiler accepts only real uploaded Picture/Video/Audio tags,
-    # which were handled and removed above.
+    # The community planner accepts only Picture/Video/Audio tags backed by the
+    # actual upload inventory; those canonical tags were handled above.
     prompt_without_reference_tags = _REFERENCE_TAG_RE.sub("", prompt)
     unexpected_tag = _ANY_REFERENCE_LIKE_RE.search(prompt_without_reference_tags)
     if unexpected_tag:
         raise _error(
-            f"Source prompt contains unsupported legacy tag {unexpected_tag.group(0)}.",
+            f"Source prompt contains unsupported reference tag {unexpected_tag.group(0)}.",
             "SOURCE_REFERENCE_TAG_UNSUPPORTED",
         )
     dialogues: list[DialogueLiteral] = []

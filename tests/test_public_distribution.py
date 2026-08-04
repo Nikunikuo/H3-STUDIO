@@ -101,11 +101,14 @@ class PublicDistributionTests(unittest.TestCase):
         self.assertIn("Test-PromptPlannerRuntime -LoadWeights:(-not $VerifyOnly)", setup)
         self.assertIn("-VerifyOnly -SkipModelHash", start)
 
-    def test_first_time_setup_skips_legacy_lfm_unless_explicitly_requested(self) -> None:
+    def test_first_time_setup_has_no_removed_lfm_path(self) -> None:
         bootstrap = (ROOT / "scripts/bootstrap.ps1").read_text(encoding="utf-8")
-        self.assertIn("$SkipPromptTranslator = $true", bootstrap)
-        self.assertNotIn("Read-Host \"Type ACCEPT-LFM", bootstrap)
-        self.assertIn("if ($AcceptPromptTranslatorLicense)", bootstrap)
+        setup = (ROOT / "scripts/setup_comfy.ps1").read_text(encoding="utf-8")
+        combined = bootstrap + setup
+        self.assertNotIn("PromptTranslator", combined)
+        self.assertNotIn("prompt_translator", combined)
+        self.assertNotIn("ACCEPT-LFM", combined)
+        self.assertIn("prompt_planner.lock.json", setup)
 
     def test_job_details_show_both_original_and_effective_prompts(self) -> None:
         html = (ROOT / "webui/static/index.html").read_text(encoding="utf-8")

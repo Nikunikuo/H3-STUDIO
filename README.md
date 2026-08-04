@@ -42,7 +42,7 @@ Set-Location .\H3-STUDIO
 .\Setup-H3-Studio.cmd
 ```
 
-最初にMiniMax H3のライセンス原文を確認し、利用資格と同意を確認できる場合だけ`ACCEPT`と入力してください。Apache-2.0の必須Qwen plannerには追加のクリック同意はなく、自動取得されます。通常UIで使わない旧LFM翻訳モデルは初回セットアップでは自動的に省略するため、無関係なライセンス選択は求めません。セットアップはPython 3.12を自動検出し、Web UI、固定ComfyUI、量子化済みH3、SageAttention、約7.50GiBのQwen plannerを隔離環境へ構築します。途中で通信が切れても同じファイルを再実行すれば取得を再開できます。旧LFM経路とのA/B比較が必要な上級者だけ、[詳細セットアップ](#セットアップ通常のcomfyui経路)の明示スイッチで追加できます。
+最初にMiniMax H3のライセンス原文を確認し、利用資格と同意を確認できる場合だけ`ACCEPT`と入力してください。Apache-2.0の必須Qwen plannerには追加のクリック同意はなく、自動取得されます。セットアップはPython 3.12を自動検出し、Web UI、固定ComfyUI、量子化済みH3、SageAttention、約7.50GiBのQwen plannerを隔離環境へ構築します。途中で通信が切れても同じファイルを再実行すれば取得を再開できます。
 
 ### 2回目以降
 
@@ -90,7 +90,7 @@ Web境界でもnumeric loopback以外の`Host`、cross-site browser request、�
 
 Qwen出力はstrict schema、Shot順と非重複時刻、参照集合、数値、カメラ方向、台詞の完全一致、日本語残留範囲を検査します。検査に失敗した場合は、旧来の長大なdegraded IRへ黙ってfallbackせず生成前に停止します。同じ入力はprompt／参照inventory／policy hashでcompile cacheを再利用でき、SeedやEasyCacheだけを変えた再生成では再コンパイルしません。RTX 5090での5-Shot実測は初回約42.7秒（モデル読込約9.2秒、生成約33.5秒）で、短い入力やcache hitでは変わります。プランナーprocessはコンパイル後に終了してVRAM／RAMを解放してから、`native_clean`のprivate ComfyUI childを起動します。
 
-`native_clean`は公開ComfyUI H3 workflowと同じnative nodesへ、検証済み英語promptをそのまま渡します。custom tokenizer nodeや旧Context-IR wrapperは挟みません。既に公開例形式へ整えた英語をbyte単位でそのまま使いたい場合は、画面のadvanced pass-through（内部名`raw_en`）を選べます。公開画面の新規入力は`community`と`raw_en`の2方式だけで、任意の`LiquidAI/LFM2-350M-ENJP-MT`は過去方式とのA/B比較用にだけ残し、community既定には使いません。モデル容量、固定revision、SHA-256、ライセンス条件は[MODEL_TERMS.md](./MODEL_TERMS.md)に記載しています。
+`native_clean`は公開ComfyUI H3 workflowと同じnative nodesへ、検証済み英語promptをそのまま渡します。custom tokenizer nodeや旧Context-IR wrapperは挟みません。既に公開例形式へ整えた英語をbyte単位でそのまま使いたい場合は、画面のadvanced pass-through（内部名`raw_en`）を選べます。公開画面の新規入力は`community`と`raw_en`の2方式だけです。モデル容量、固定revision、SHA-256、ライセンス条件は[MODEL_TERMS.md](./MODEL_TERMS.md)に記載しています。
 
 折り畳み式の「台詞を固定する」は任意の上書き欄です。空欄なら本文中の明示台詞を使い、入力した場合だけ対象Cutの台詞を置き換えます。厳密な時間順を効かせたい大きな動作・台詞・音は、同じCut内でも改行して分ける方が明確です。
 
@@ -125,9 +125,9 @@ H3 Studioは、明示台詞と単独音声が同時にある場合、既定の�
 - text encoder: MiniMax H3用Qwen3-VL-32B NVFP4/AWQ
 - VAE: video FP16＋audio FP32
 - モデル5ファイル: 合計63,440,965,087 bytes（約59.08GiB）。個別の期待byte数とSHA-256は`comfy_models.lock.json`へ固定
-- Python: `.comfy-venv`。Web UI本体の`.venv`やlegacy Diffusersとは分離。torch 2.13.0+cu130、torchvision 0.28.0+cu130、torchaudio 2.11.0+cu130、torchao 0.17.0を固定
+- Python: `.comfy-venv`。Web UI本体の`.venv`とは分離。torch 2.13.0+cu130、torchvision 0.28.0+cu130、torchaudio 2.11.0+cu130、torchao 0.17.0を固定
 - attention: SageAttention `2.2.0+cu130torch2.10.0andhigher.post6`＋triton-windows `3.7.1.post27`を標準ON
-- 既定workflow profile: `native_clean`。公開ComfyUI native H3 nodesだけを使い、custom tokenizer互換層や`<d>` markerを読み込みません。旧互換profileは後方比較用で、通常生成には使いません
+- workflow profile: `native_clean`のみ。公開ComfyUI native H3 nodesだけを使い、custom tokenizer互換層や`<d>` markerを読み込みません
 - scheduler: UIを増やさない`auto`。公開ComfyUI workflowの実設定に合わせ、FL2VA（Text／Image／Frames）とRef2VA（Omni）の両方を`simple`へ解決し、実効値をジョブ詳細へ保存。Ref2VAの`normal`は内部明示指定による診断用途としてのみ残す
 
 Omni画像はUIの「参照画像の解析精度」で選べます。初期値の`高速（match）`は元画像を拡大せず、縦横比を維持したまま生成canvasと同程度の総画素数まで必要な場合だけ縮小し、速度比較と安定性を優先します。`高精度（max）`もupscaleは行わず、短辺2048pxを上限に原寸付近のディテールを使うため、人物や製品の同一性を確認するときに向きます。ただし参照tokenが全sampling stepへ入るため、matchより数倍遅くなり得ます。選択値はジョブ履歴へ保存され、プロンプト再利用時にも復元されます。
@@ -158,7 +158,8 @@ Sage標準化後も同じ通常ブラウザ経路を再実行し、fresh private
 
 ### 旧Diffusers経路の調査記録（比較用）
 
-以下は固定Diffusers PRを使って原因を切り分けた時点の記録です。通常のH3 Studio生成経路ではありません。
+> [!NOTE]
+> 以下は固定Diffusers PRを使って原因を切り分けた時点の履歴資料です。測定値と実装上の発見を将来の比較に残していますが、旧worker、取得／変換script、専用requirementsは現行HEADから削除済みで、このcheckoutから再実行はできません。現在のH3 Studio生成経路やセットアップ手順として読まないでください。
 
 旧Diffusers Ref2VA workerでは、マージ済みComfyUI H3実装の品質優先`max`方式を参考に、画像を無意味に拡大せず、短辺2048pxを上限として32px単位へ整列しました。1448×1086の一般的な画像なら実質的にネイティブの1440×1088となり、補間だけで増えるvision tokenを避けます。旧経路の初回モデル切替はRAM使用量が大きいため、ほかの大規模AI処理との同時実行を避けました。
 
@@ -166,7 +167,7 @@ Sage標準化後も同じ通常ブラウザ経路を再実行し、fresh private
 
 旧workerのQwenは64層を一度構築してから削るのではなく、checkpointから必要な50層だけを最初から構築します。そのためロード時に`layers.{50...63}`が`UNEXPECTED`と表示されますが、これは意図的に読み飛ばした未使用14層であり、欠損ではありません。実画像2枚のembeddingが旧`hidden_states[50]`と完全一致し、同一seedの連続生成MP4もSHA-256単位で一致することを確認しています。
 
-Omniの番号は素材タイプごとです。たとえば画像→動画→画像→音声のUI順なら、`<Picture 1>`→`<Video 1>`→`<Picture 2>`→`<Audio 1>`になります。並べ替えるとタグも自動再採番されます。community planner／advanced pass-throughでは動画内の音声トラックを常に無視し、単独音声だけをUI上で`<Audio n>`として採番します。ただし、明示台詞と既定の「指定台詞を優先」を併用した場合、添付ファイルは監査用に保存するだけで、実行用`references`と実効プロンプトから除外します。「元音声も使う（実験的）」を明示選択した場合だけ、Audio VAEによる全波形条件としてH3へ渡します。動画内音声を個別に声質参照／再利用へ解決する機能は、通常画面から呼ばれない旧Context-IR比較経路にだけ残しています。
+Omniの番号は素材タイプごとです。たとえば画像→動画→画像→音声のUI順なら、`<Picture 1>`→`<Video 1>`→`<Picture 2>`→`<Audio 1>`になります。並べ替えるとタグも自動再採番されます。community planner／advanced pass-throughでは動画内の音声トラックを常に無視し、単独音声だけをUI上で`<Audio n>`として採番します。ただし、明示台詞と既定の「指定台詞を優先」を併用した場合、添付ファイルは監査用に保存するだけで、実行用`references`と実効プロンプトから除外します。「元音声も使う（実験的）」を明示選択した場合だけ、Audio VAEによる全波形条件としてH3へ渡します。動画内音声を個別に声質だけへ分離して再利用する機能はありません。
 
 ### 音声・音響の指定
 
@@ -185,6 +186,8 @@ H3は映像と音声を別々に後処理するモデルではありません。
 ### 速度を比較するときの注意
 
 「15秒」という長さだけでは速度を比較できません。計算量には少なくとも解像度、denoise回数、T2V／FL2VA／Ref2VA、参照素材の数と長さ、量子化、offload、GPU枚数、attention backendが影響します。
+
+この節のうち「旧Diffusers」と明記した値は、削除済み調査経路の履歴データです。現行HEADから同じscriptを実行する手順ではなく、現在の量子化済みComfyUI経路と過去のfull-attention経路を混同しないために残しています。
 
 - Diffusers PR文書では、`960×544`は学習canvasの`1344×768`より1 stepあたり約2.3倍高速とされています。
 - 旧Diffusersの`num_inference_steps=20`は終端0を含むため、実際のTransformer評価は19回です。
@@ -226,7 +229,7 @@ H3は映像と音声を別々に後処理するモデルではありません。
 
 ## ライセンス上の注意
 
-H3 Studio独自コードはルートの[MIT License](./LICENSE)で公開します。このMIT Licenseは、MiniMax H3／Comfy-Orgのモデル重み、ComfyUI、SageAttention、Qwen、Diffusers、PyTorch、その他の依存物を再ライセンスしません。
+H3 Studio独自コードはルートの[MIT License](./LICENSE)で公開します。このMIT Licenseは、MiniMax H3／Comfy-Orgのモデル重み、ComfyUI、SageAttention、Qwen、PyTorch、その他の現行依存物を再ライセンスしません。履歴資料が参照するDiffusersにも当然適用されません。
 
 MiniMax H3 Community License Agreementは、EU、英国、韓国、米国を適用地域から除外しています。本セットアップは日本国内のローカル環境で検証しています。利用、複製、実行等を行うことでライセンスへ同意した扱いになり得ます。用途、出力、再配布、第三者提供、商用条件を含む重要事項は[MODEL_TERMS.md](./MODEL_TERMS.md)から公式原文を確認してください。依存物のライセンスは[THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)に整理しています。
 
@@ -238,23 +241,17 @@ MiniMax H3 Community License Agreementは、EU、英国、韓国、米国を適�
 - text encoderはQwen3-VL-32B。H3は50層目直後の未正規化hidden stateを使用します。
 - guidanceは重みに蒸留済みで、negative prompt／CFGは使いません。
 
-通常生成に必要なComfy-Org版5ファイルは、FL2VA／Ref2VA／共有Qwen／video VAE／audio VAEを合わせて63,440,965,087 bytes（約59.08GiB）です。ローカル実測SHA-256は固定revisionのLFS SHA-256と全件一致しています。元のMiniMaxAI公式リポジトリ全体は、共有ファイルの重複をLFS SHA-256単位で除いても210,501,560,795 bytes（約196.04GiB）で、こちらはlegacy Diffusers比較を再現する場合だけ必要です。
+通常生成に必要なComfy-Org版5ファイルは、FL2VA／Ref2VA／共有Qwen／video VAE／audio VAEを合わせて63,440,965,087 bytes（約59.08GiB）です。ローカル実測SHA-256は固定revisionのLFS SHA-256と全件一致しています。旧Diffusers調査時に検証した元のMiniMaxAI公式リポジトリ全体は、共有ファイルの重複をLFS SHA-256単位で除いて210,501,560,795 bytes（約196.04GiB）でした。この値は履歴資料であり、現行セットアップはそのリポジトリ全体を取得しません。
 
 ## セットアップ（通常のComfyUI経路）
 
-通常はQuick Startの`Setup-H3-Studio.cmd`を使ってください。内部では、`setup.ps1`が最小構成のWeb UI用`.venv`を作り、`setup_comfy.ps1`がPython 3.12の`.comfy-venv`、固定ComfyUI checkout、固定revisionのH3 5モデル、必須Qwen3-4B planner、固定SageAttention wheelを用意します。旧A/B比較用のCPU版LFM翻訳モデルは通常セットアップで省略し、`-AcceptPromptTranslatorLicense`を明示した場合だけ取得します。不要なworkflow templatesリポジトリはcloneせず、旧Diffusers比較環境も通常セットアップへ混ぜません。H3は`comfy_models.lock.json`、Qwen plannerは`prompt_planner.lock.json`、旧LFMは`prompt_translator.lock.json`のbyte数とSHA-256へ照らして検証します。巨大重み、wheel cache、仮想環境、上流checkoutはGitへ入りません。
+通常はQuick Startの`Setup-H3-Studio.cmd`を使ってください。内部では、`setup.ps1`が最小構成のWeb UI用`.venv`を作り、`setup_comfy.ps1`がPython 3.12の`.comfy-venv`、固定ComfyUI checkout、固定revisionのH3 5モデル、必須Qwen3-4B planner、固定SageAttention wheelを用意します。不要なworkflow templatesリポジトリはcloneしません。H3は`comfy_models.lock.json`、Qwen plannerは`prompt_planner.lock.json`のbyte数とSHA-256へ照らして検証します。巨大重み、wheel cache、仮想環境、上流checkoutはGitへ入りません。
 
-自動化などでモデル取得を伴うセットアップを直接実行する場合は、各公式ライセンスを確認したうえでMiniMax H3の明示スイッチを付けます。Apache-2.0のQwen plannerは追加スイッチなしで必ず固定revisionから取得します。旧LFMとの比較も必要なら`-AcceptPromptTranslatorLicense`、不要なら`-SkipPromptTranslator`を指定します。全5個のH3モデルが既に正しく、再ダウンロードしない検査・修復ではMiniMax側の取得スイッチを要求しません。
+自動化などでモデル取得を伴うセットアップを直接実行する場合は、各公式ライセンスを確認したうえでMiniMax H3の明示スイッチを付けます。Apache-2.0のQwen plannerは追加スイッチなしで必ず固定revisionから取得します。全5個のH3モデルが既に正しく、再ダウンロードしない検査・修復ではMiniMax側の取得スイッチを要求しません。
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup_comfy.ps1 -AcceptMiniMaxH3License -AcceptPromptTranslatorLicense
-```
-
-翻訳モデルを導入しない場合:
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup_comfy.ps1 -AcceptMiniMaxH3License -SkipPromptTranslator
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup_comfy.ps1 -AcceptMiniMaxH3License
 ```
 
 起動前と同じ高速検査を単独で行う場合:
@@ -263,7 +260,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup_comfy.ps
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup_comfy.ps1 -VerifyOnly -SkipModelHash
 ```
 
-H3の5ファイル約59.08GiBを読み直して完全SHA-256検査する場合は`-SkipModelHash`を外します。通常起動は固定source SHA、隔離runtime、CUDA、H3 5ファイルの厳密なbyte数に加え、必須Qwen planner 9ファイルのbyte数とH3 Studio管理の来歴marker（モデルID、固定revision、lock SHA-256、件数、総容量）を高速検査します。約680.75MiBの任意LFM翻訳モデルが導入済みなら、こちらは小さいため毎回SHA-256まで検証します。
+H3の5ファイル約59.08GiBを読み直して完全SHA-256検査する場合は`-SkipModelHash`を外します。通常起動は固定source SHA、隔離runtime、CUDA、H3 5ファイルの厳密なbyte数に加え、必須Qwen planner 9ファイルのbyte数とH3 Studio管理の来歴marker（モデルID、固定revision、lock SHA-256、件数、総容量）を高速検査します。
 
 SageAttentionを使わずPyTorch attentionで再現・切り分ける場合は、先に稼働中のH3 StudioをそのPowerShellで`Ctrl+C`して終了し、新しいPowerShellで次のように起動します。異なるattention backendの既存serverが動いている場合、起動スクリプトは黙って再利用せず明示的に停止を求めます。
 
@@ -274,20 +271,9 @@ $env:H3_ATTENTION_BACKEND = 'pytorch'
 
 環境変数を指定しない通常起動はSageAttentionです。SageAttention wheelの導入自体を避けて初回構築する場合は、同じ環境変数を設定してから`Setup-H3-Studio.cmd`を実行してください。PyTorch構成では第三者SageAttention wheelとtriton-windowsを取得しません。現行ブラウザUIで選べる最小の横16:9設定は、Text、Preview `672×384`、約5秒（124 frames）、Draft 8、EasyCache OFFです。過去のengine-only `320×192`試験値は動作回帰の記録であり、現行UIの解像度候補ではありません。
 
-### Legacy Diffusers比較の再構築
+### Legacy Diffusers検証資料について
 
-原因調査時のraw MiniMaxAI重みと固定Diffusers workerを再現する場合だけ、以下を追加実行します。通常生成には不要です。
-
-```powershell
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -WithLegacyDiffusers
-.\.venv\Scripts\python.exe .\scripts\download_official.py
-.\.venv\Scripts\python.exe .\scripts\prepare_diffusers.py
-.\.venv\Scripts\python.exe .\scripts\download_ref2va.py
-.\.venv\Scripts\python.exe .\scripts\prepare_ref2va.py
-.\.venv\Scripts\python.exe .\scripts\inference_smoke.py
-```
-
-このlegacyダウンロードも固定revisionかつ再開可能で、公式モデルリポジトリ内のPythonコードは取得・実行しません。ModelScopeの選択対象60パスについても、更新READMEを除く59ファイルがHugging Face固定revisionとサイズ・SHA-256一致済みです。
+旧Diffusers worker、raw MiniMaxAI重みの取得／変換script、専用requirements、`-WithLegacyDiffusers`セットアップスイッチは現行HEADに含まれません。下の測定値は原因調査と将来比較のために保持した履歴であり、現在の利用者向け実行手順ではありません。当時の取得は固定revisionかつ再開可能な方法で行い、公式モデルリポジトリ内のPythonコードは取得・実行していません。ModelScopeの選択対象60パスについても、更新READMEを除く59ファイルがHugging Face固定revisionとサイズ・SHA-256一致済みでした。
 
 ## 5090向け方式
 
@@ -295,9 +281,12 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -Wit
 
 ### Legacy Diffusers検証結果
 
+> [!CAUTION]
+> この節は削除済み旧実装の検証記録です。数値は保持していますが、記載されたworker／benchmark／smoke経路は現行HEADから実行できません。
+
 旧経路はTransformer（BF16約61.7GiB）とQwen3-VL（約62.1GiB）をロード時にint8 weight-only量子化し、CPUからblock単位でstreamしました。video VAEをCPU offload、audio VAEをGPU常駐としたWindows量子化ローダーの冷間構築では、一時的に約217GiB RAMを実測しています。
 
-Diffusers PR #14355のconsumer GPUサンプルは`low_cpu_mem_usage=False`を指定していますが、同じ固定SHAの量子化ローダーはFalseを明示的に拒否します。本リポジトリはローダーがサポートする`True`を使用します。この差異はスモークテストで実動作を確認します。
+Diffusers PR #14355のconsumer GPUサンプルは`low_cpu_mem_usage=False`を指定していましたが、同じ固定SHAの量子化ローダーはFalseを明示的に拒否しました。旧workerではローダーがサポートする`True`を使用し、この差異をスモークテストで実動作確認しました。
 
 スモークテストは最小負荷を優先し、320×192、124 frames（約5秒）、2 sigma grid points（1回のモデル評価）、seed 42で動画とステレオ音声を共同生成します。品質評価ではなく、ロード、denoise、video/audio VAE、MP4 mux、音声トラック検証が目的です。
 
@@ -325,13 +314,7 @@ Ref2VA安定化の実画像検証（2026-08-03）:
 - 各MP4は5.175秒、H.264 124 frames＋AAC 331,776 samplesを全decode。画素標準偏差62.6301、audio RMS 0.0218702／peak 0.1550
 - 冷間ロード時process peak RSS 217.28GiB（旧64層構築経路226.13GiB）、peak paged memory 239.69GiB
 
-Qwenだけを再検証する場合:
-
-```powershell
-.\.venv\Scripts\python.exe .\scripts\benchmark_qwen_ref2va.py --request .\webui_data\jobs\<job-id>\request.json --repeat 2
-```
-
-生成品質を確認する場合は`num_inference_steps`を増やし、学習canvasに近い解像度を使用してください。スモーク値の2 grid pointsは実装経路の通過確認専用です。
+当時のQwen単体再検証には、現在は削除済みの`benchmark_qwen_ref2va.py`を使用しました。生成品質を確認する場合は`num_inference_steps`を増やし、学習canvasに近い解像度を使用する必要がありました。スモーク値の2 grid pointsは実装経路の通過確認専用で、品質評価値ではありません。
 
 ## Git除外
 

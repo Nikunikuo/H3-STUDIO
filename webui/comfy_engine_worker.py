@@ -48,9 +48,6 @@ PROMPT_TIMEOUT_SECONDS = 12 * 60 * 60.0
 POLL_INTERVAL_SECONDS = 1.0
 MAX_REFERENCE_BYTES = 2 * 1024**3
 ATTENTION_BACKENDS = {"sage", "pytorch"}
-COMPAT_NODE_NAME = "h3_studio_compat"
-COMPAT_VERIFICATION_MARKER = "H3_STUDIO_COMPAT tokenizer_patch=verified ids=151669-151675"
-COMPAT_VERIFICATION_TIMEOUT_SECONDS = 5.0
 
 _MEDIA_EXTENSIONS = {
     "image": {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"},
@@ -332,72 +329,6 @@ def make_runtime_paths(root: Path, job_token: str) -> RuntimePaths:
     return paths
 
 
-def stage_compatibility_node(root: Path, paths: RuntimePaths) -> Path:
-    """Stage only the repository-owned H3 shim into the isolated Comfy base."""
-
-    project_root = root.resolve()
-    source = (project_root / "comfy_compat" / COMPAT_NODE_NAME).resolve(strict=True)
-    if not _is_within(project_root, source):
-        raise ValueError(f"compatibility node escapes the project root: {source}")
-    if not source.is_dir() or source.is_symlink():
-        raise RuntimeError(f"H3 compatibility node must be a real directory: {source}")
-    init_file = source / "__init__.py"
-    if not init_file.is_file() or init_file.is_symlink():
-        raise RuntimeError(f"H3 compatibility node is incomplete: {init_file}")
-
-    # The package intentionally has one executable file.  Reject unexpected
-    # staged code instead of allowing a future/untracked helper to inherit the
-    # custom-node whitelist implicitly.
-    for candidate in source.rglob("*"):
-        relative = candidate.relative_to(source)
-        if "__pycache__" in relative.parts or candidate.suffix == ".pyc":
-            continue
-        if candidate.is_symlink():
-            raise RuntimeError(f"H3 compatibility node contains a symlink: {relative}")
-        if candidate.is_file() and relative != Path("__init__.py"):
-            raise RuntimeError(f"H3 compatibility node contains an unexpected file: {relative}")
-
-    runtime_root = paths.root.resolve(strict=True)
-    expected_runtime_parent = (project_root / "webui_data" / "comfy_runtime").resolve()
-    if not _is_within(expected_runtime_parent, runtime_root):
-        raise ValueError(f"Comfy runtime escapes the project runtime root: {runtime_root}")
-    base = paths.base.resolve(strict=True)
-    if not _is_within(runtime_root, base):
-        raise ValueError(f"Comfy base escapes its isolated runtime: {base}")
-
-    custom_nodes = paths.base / "custom_nodes"
-    if custom_nodes.exists() or custom_nodes.is_symlink():
-        resolved_custom_nodes = custom_nodes.resolve(strict=False)
-        if not _is_within(base, resolved_custom_nodes):
-            raise ValueError(f"custom_nodes escapes the isolated Comfy base: {resolved_custom_nodes}")
-        if custom_nodes.is_symlink():
-            custom_nodes.unlink()
-        else:
-            shutil.rmtree(custom_nodes)
-    destination = custom_nodes / COMPAT_NODE_NAME
-    destination.mkdir(parents=True, exist_ok=False)
-    staged_init = destination / "__init__.py"
-    shutil.copy2(init_file, staged_init)
-    if staged_init.read_bytes() != init_file.read_bytes():
-        raise RuntimeError("staged H3 compatibility node does not match its repository source")
-    return destination
-
-
-def stage_profile_custom_nodes(
-    root: Path,
-    paths: RuntimePaths,
-    workflow_profile_name: str,
-) -> Path | None:
-    """Prepare only the custom code explicitly allowed by the profile."""
-
-    if workflow_profile_name == "native_clean":
-        return None
-    if workflow_profile_name == DEFAULT_WORKFLOW_PROFILE:
-        return stage_compatibility_node(root, paths)
-    choices = ", ".join(sorted(SUPPORTED_WORKFLOW_PROFILES))
-    raise ValueError(f"workflow_profile must be one of: {choices}")
-
-
 def reserve_loopback_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.bind(("127.0.0.1", 0))
@@ -480,12 +411,6 @@ def build_comfy_command(
         "2048",
         "--log-stdout",
     ]
-    if workflow_profile_name == DEFAULT_WORKFLOW_PROFILE:
-        disable_index = command.index("--disable-all-custom-nodes")
-        command[disable_index + 1:disable_index + 1] = [
-            "--whitelist-custom-nodes",
-            COMPAT_NODE_NAME,
-        ]
     if configured_attention_backend() == "sage":
         command.append("--use-sage-attention")
     return command
@@ -499,7 +424,6 @@ class LogPump:
         self._log_path = log_path
         self._lines: queue.SimpleQueue[str] = queue.SimpleQueue()
         self._tail: list[str] = []
-        self._compatibility_verified = threading.Event()
         self._thread = threading.Thread(target=self._read, name="comfy-stdout-drain", daemon=True)
         self._thread.start()
 
@@ -511,8 +435,6 @@ class LogPump:
         handle.flush()
         self._tail.append(line)
         del self._tail[:-80]
-        if COMPAT_VERIFICATION_MARKER in line:
-            self._compatibility_verified.set()
         self._lines.put(line)
 
     def _read(self) -> None:
@@ -549,40 +471,12 @@ class LogPump:
     def tail(self) -> str:
         return "\n".join(self._tail[-20:])
 
-    def wait_for_compatibility_verification(self, timeout: float) -> bool:
-        return self._compatibility_verified.wait(timeout)
-
     def close(self) -> None:
         try:
             self._stream.close()
         except (OSError, ValueError):
             pass
         self._thread.join(timeout=3)
-
-
-def require_compatibility_verification(
-    pump: LogPump, timeout: float = COMPAT_VERIFICATION_TIMEOUT_SECONDS
-) -> None:
-    """Fail closed unless the isolated H3 tokenizer probe completed."""
-
-    if not pump.wait_for_compatibility_verification(timeout):
-        raise RuntimeError(
-            "H3 tokenizer compatibility node did not verify the required token IDs "
-            "during ComfyUI startup\n" + pump.tail()
-        )
-
-
-def verify_profile_startup(pump: LogPump, workflow_profile_name: str) -> None:
-    """Run profile-specific startup probes without probing native ComfyUI."""
-
-    if workflow_profile_name == "native_clean":
-        return
-    if workflow_profile_name == DEFAULT_WORKFLOW_PROFILE:
-        require_compatibility_verification(pump)
-        return
-    choices = ", ".join(sorted(SUPPORTED_WORKFLOW_PROFILES))
-    raise ValueError(f"workflow_profile must be one of: {choices}")
-
 
 def terminate_process_tree(process: subprocess.Popen[str] | None) -> None:
     if process is None:
@@ -923,7 +817,6 @@ def run(request: dict[str, Any], *, root: Path = ROOT) -> None:
         markers = verify_installation(root, variant)
         timings["verification_seconds"] = round(time.monotonic() - checkpoint, 3)
 
-        compat_node_path = stage_profile_custom_nodes(root, paths, profile)
         port = reserve_loopback_port()
         command = build_comfy_command(
             root,
@@ -979,7 +872,6 @@ def run(request: dict[str, Any], *, root: Path = ROOT) -> None:
                 if time.monotonic() >= deadline:
                     raise TimeoutError(f"ComfyUI did not become healthy\n{pump.tail()}")
                 time.sleep(0.25)
-        verify_profile_startup(pump, profile)
         verify_loopback_listener_owner(process, port)
         client.timeout = 30.0
         timings["startup_seconds"] = round(time.monotonic() - checkpoint, 3)
@@ -1139,14 +1031,6 @@ def run(request: dict[str, Any], *, root: Path = ROOT) -> None:
                 "async_offload_streams": 2,
                 "attention_backend": attention_backend,
                 "workflow_profile": profile,
-                "compatibility_node": (
-                    os.fspath(compat_node_path) if compat_node_path is not None else None
-                ),
-                "h3_token_ids": (
-                    list(range(151669, 151676))
-                    if profile == DEFAULT_WORKFLOW_PROFILE
-                    else []
-                ),
             },
         )
     finally:

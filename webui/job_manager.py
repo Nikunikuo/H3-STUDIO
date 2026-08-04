@@ -17,21 +17,10 @@ from typing import Any
 import psutil
 
 from .process_guard import ProcessJob
-from .prompt_translation import (
-    PromptTranslationError,
-    classify_visible_text_literals,
-    requires_translation,
-    validate_authorized_visible_text_literals,
-    validate_native_dialogue_blocks,
-)
 
 
 EVENT_PREFIX = "H3EVENT "
 TERMINAL_STATES = {"completed", "failed", "cancelled", "interrupted"}
-PROMPT_TRANSLATOR_MODULE = "webui.prompt_translation_worker"
-PROMPT_TRANSLATOR_TIMEOUT_SECONDS = 180
-PROMPT_TRANSLATOR_MODEL_DIR = Path("models") / "prompt_translator"
-PROMPT_TRANSLATOR_LOCK = "prompt_translator.lock.json"
 COMMUNITY_PLANNER_MODULE = "webui.community_prompt_worker"
 COMMUNITY_PLANNER_TIMEOUT_SECONDS = 240
 COMMUNITY_PLANNER_MODEL_ID = "Qwen/Qwen3-4B-Instruct-2507"
@@ -66,50 +55,14 @@ _CJK_TEXT_RE = re.compile(
     "\uff66-\uff9f"  # Half-width Katakana.
     "]"
 )
-_NATIVE_DIALOGUE_RE = re.compile(
-    r"<d>\s*\[(?P<language>[A-Za-z][A-Za-z -]{1,31})\]\s*"
-    r"(?P<text>.*?)\s*</d>",
-    re.IGNORECASE | re.DOTALL,
-)
-_OPEN_DIALOGUE_RE = re.compile(r"<d>", re.IGNORECASE)
-_CLOSE_DIALOGUE_RE = re.compile(r"</d>", re.IGNORECASE)
-_REFERENCE_TAG_RE = re.compile(
-    r"<(?P<kind>Picture|Video|Audio)\s+(?P<index>[1-9][0-9]*)>",
-    re.IGNORECASE,
-)
 _ALL_REFERENCE_TAG_RE = re.compile(
-    r"<(?P<kind>Picture|Video|Audio|Subject) (?P<index>[1-9][0-9]*)>",
+    r"<(?P<kind>Picture|Video|Audio) (?P<index>[1-9][0-9]*)>",
 )
 _NONCANONICAL_CONTROL_TOKEN_RE = re.compile(
-    r"<(?:/?[A-Za-z]|\||<|>)[^>\r\n]*(?:>|$)"
-)
-_OFFICIAL_SECTION_RE = re.compile(
-    r"^(?P<header>subject_definitions|summary|retention_analysis|"
-    r"detailed_description|integrated_multimodal_description|"
-    r"overall_soundscape|non_diegetic_music)[ \t]*:[ \t]*$",
-    re.IGNORECASE | re.MULTILINE,
-)
-_OFFICIAL_SIX_SECTION_HEADERS = (
-    "subject_definitions",
-    "summary",
-    "retention_analysis",
-    "detailed_description",
-    "overall_soundscape",
-    "non_diegetic_music",
-)
-_OFFICIAL_THREE_SECTION_HEADERS = (
-    "integrated_multimodal_description",
-    "overall_soundscape",
-    "non_diegetic_music",
+    r"<\s*(?:/?[A-Za-z]|\||<|>)[^>]*(?:>|$)"
 )
 _WINDOWS_ABSOLUTE_PATH_RE = re.compile(
     r"(?i)(?<![A-Za-z0-9])(?:[A-Z]:[\\/]|\\\\)[^\r\n]*"
-)
-_UNREQUESTED_SPEECH_CUE_RE = re.compile(
-    r"\b(?:speech|spoken|speak(?:s|ing)?|said|says?|talk(?:s|ing)?|dialogue|"
-    r"narrat(?:e|es|ed|ing|ion|or)|voice(?:[ -]?over)?|voices|vocal(?:s|ization)?|"
-    r"language|words?|utterance|greeting)\b",
-    re.IGNORECASE,
 )
 _ORDINARY_QUOTED_TEXT_RE = re.compile(r'"[^"\r\n]+"|“[^”\r\n]+”')
 _NATIVE_DIALOGUE_TAG_RE = re.compile(r"</?d(?:\s[^>]*)?>", re.IGNORECASE)
@@ -121,7 +74,6 @@ PUBLIC_ENGINE_DIAGNOSTIC_FIELDS = frozenset(
         "async_offload_streams",
         "attention_backend",
         "workflow_profile",
-        "h3_token_ids",
     }
 )
 
@@ -134,93 +86,6 @@ def _redact_public_text(value: str) -> str:
     """Remove local absolute paths from browser-visible messages/logs."""
 
     return _WINDOWS_ABSOLUTE_PATH_RE.sub("[local path redacted]", value)
-
-
-def prompt_translator_status(root: Path) -> dict[str, Any]:
-    """Return a cheap, public-safe readiness snapshot for the pinned model.
-
-    SHA-256 verification belongs to setup/explicit verification commands.  The
-    frequently-polled capability endpoint only verifies that every lock-file
-    entry resolves beneath ``models/prompt_translator`` and has the pinned byte
-    size.
-    """
-
-    resolved_root = root.resolve()
-    lock_path = resolved_root / PROMPT_TRANSLATOR_LOCK
-    public: dict[str, Any] = {
-        "ready": False,
-        "status": "lock_missing",
-        "model": None,
-        "repo_id": None,
-        "revision": None,
-        "local_only": True,
-        "model_inference": True,
-        "total_bytes": None,
-        "missing_files": [],
-        "invalid_files": [],
-    }
-    if not lock_path.is_file():
-        return public
-    try:
-        lock = json.loads(lock_path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        public["status"] = "lock_invalid"
-        return public
-
-    source = lock.get("source")
-    if isinstance(source, Mapping):
-        repo_id = str(source.get("repo_id") or "").strip() or None
-        revision = str(source.get("revision") or "").strip() or None
-        public.update(model=repo_id, repo_id=repo_id, revision=revision)
-    verification = lock.get("verification")
-    if isinstance(verification, Mapping):
-        try:
-            public["total_bytes"] = int(verification.get("total_bytes"))
-        except (TypeError, ValueError):
-            pass
-
-    expected_root = (resolved_root / PROMPT_TRANSLATOR_MODEL_DIR).resolve()
-    entries = lock.get("files")
-    if not isinstance(entries, list) or not entries:
-        public["status"] = "lock_invalid"
-        return public
-
-    missing: list[str] = []
-    invalid: list[str] = []
-    for entry in entries:
-        if not isinstance(entry, Mapping):
-            invalid.append("<invalid-entry>")
-            continue
-        relative_name = str(entry.get("path") or "").replace("\\", "/")
-        try:
-            expected_size = int(entry.get("size"))
-            candidate = (resolved_root / relative_name).resolve()
-            candidate.relative_to(expected_root)
-        except (TypeError, ValueError, OSError):
-            invalid.append(relative_name or "<missing-path>")
-            continue
-        if not candidate.is_file():
-            missing.append(relative_name)
-            continue
-        try:
-            actual_size = candidate.stat().st_size
-        except OSError:
-            missing.append(relative_name)
-            continue
-        if actual_size != expected_size:
-            invalid.append(relative_name)
-
-    public["missing_files"] = missing
-    public["invalid_files"] = invalid
-    if not public["repo_id"] or not public["revision"]:
-        public["status"] = "lock_invalid"
-    elif invalid:
-        public["status"] = "model_invalid"
-    elif missing:
-        public["status"] = "model_incomplete"
-    else:
-        public.update(ready=True, status="ready")
-    return public
 
 
 def community_planner_status(root: Path) -> dict[str, Any]:
@@ -316,29 +181,7 @@ def community_planner_status(root: Path) -> dict[str, Any]:
     return public
 
 
-def _has_cjk_outside_native_dialogue(prompt: str) -> bool:
-    without_dialogue = _NATIVE_DIALOGUE_RE.sub("", prompt)
-    return _CJK_TEXT_RE.search(without_dialogue) is not None
-
-
-def _dialogue_events(prompt: str) -> tuple[tuple[str, str], ...]:
-    return tuple(
-        (
-            match.group("language").strip(),
-            match.group("text"),
-        )
-        for match in _NATIVE_DIALOGUE_RE.finditer(prompt)
-    )
-
-
-def _reference_tags(prompt: str) -> tuple[tuple[str, int], ...]:
-    return tuple(
-        (match.group("kind").casefold(), int(match.group("index")))
-        for match in _REFERENCE_TAG_RE.finditer(prompt)
-    )
-
-
-def _translator_reference_manifest(references: list[Any]) -> list[dict[str, Any]]:
+def _reference_manifest(references: list[Any]) -> list[dict[str, Any]]:
     """Expose only stable reference ordinals; never send upload paths/names."""
 
     ordinals = {"image": 0, "video": 0, "audio": 0}
@@ -363,13 +206,13 @@ def _translator_reference_manifest(references: list[Any]) -> list[dict[str, Any]
     return manifest
 
 
-def _validate_direct_reference_tags(
+def _validate_reference_tags(
     prompt: str,
     *,
     mode: str,
     references: list[Any],
 ) -> list[dict[str, Any]]:
-    """Read-only allowlist check for reference labels in a direct prompt."""
+    """Read-only allowlist check for reference labels in a current prompt."""
 
     scrubbed = _ALL_REFERENCE_TAG_RE.sub("", prompt)
     scrubbed = scrubbed.replace("<d>", "").replace("</d>", "")
@@ -397,7 +240,7 @@ def _validate_direct_reference_tags(
     elif mode == "omni":
         allowed = {
             (str(item["kind"]).casefold(), int(item["index"]))
-            for item in _translator_reference_manifest(references)
+            for item in _reference_manifest(references)
         }
         # Manifest kind names are upload kinds while H3 uses Picture labels.
         allowed = {
@@ -407,13 +250,6 @@ def _validate_direct_reference_tags(
     else:
         allowed = set()
 
-    # The formatter introduces <Subject N> only as a stable identity alias for
-    # the character in <Picture N>. It must never create a new input ordinal.
-    allowed.update(
-        ("subject", index)
-        for kind, index in tuple(allowed)
-        if kind == "picture"
-    )
     if observed <= allowed:
         return []
     return [
@@ -424,162 +260,6 @@ def _validate_direct_reference_tags(
             "fatal": True,
         }
     ]
-
-
-def _validate_compiled_prompt(
-    source: str,
-    compiled: str,
-    *,
-    mode: str,
-    references: list[Any],
-    compiler_metadata: Mapping[str, Any] | None = None,
-) -> list[dict[str, Any]]:
-    """Validate the worker's complete H3 prompt before GPU inference."""
-
-    diagnostics: list[dict[str, Any]] = []
-
-    def fail(code: str, message: str) -> None:
-        diagnostics.append(
-            {
-                "severity": "error",
-                "code": code,
-                "message": message,
-                "fatal": True,
-            }
-        )
-
-    if not compiled.strip():
-        fail("TRANSLATOR_EMPTY_OUTPUT", "変換後のH3プロンプトが空です。")
-        return diagnostics
-
-    section_matches = list(_OFFICIAL_SECTION_RE.finditer(compiled))
-    headers = tuple(match.group("header").casefold() for match in section_matches)
-    expected_headers = (
-        _OFFICIAL_SIX_SECTION_HEADERS
-        if mode == "omni"
-        else _OFFICIAL_THREE_SECTION_HEADERS
-    )
-    sections_valid = headers == expected_headers
-    if not sections_valid:
-        fail(
-            "TRANSLATOR_INVALID_SECTIONS",
-            "変換結果が生成モードに対応するH3公式セクション構造になっていません。",
-        )
-    else:
-        for index, match in enumerate(section_matches):
-            end = section_matches[index + 1].start() if index + 1 < len(section_matches) else len(compiled)
-            if not compiled[match.end() : end].strip():
-                fail(
-                    "TRANSLATOR_EMPTY_SECTION",
-                    f"{headers[index]} セクションが空です。",
-                )
-
-    metadata = compiler_metadata if isinstance(compiler_metadata, Mapping) else {}
-    raw_literals = metadata.get("visible_text_literals", [])
-    raw_hashes = metadata.get("visible_text_literal_sha256", [])
-    visible_literals: tuple[str, ...] = ()
-    visible_metadata_valid = True
-    if not isinstance(raw_literals, list) or not all(
-        isinstance(item, str) for item in raw_literals
-    ):
-        visible_metadata_valid = False
-    if not isinstance(raw_hashes, list) or not all(
-        isinstance(item, str) for item in raw_hashes
-    ):
-        visible_metadata_valid = False
-    if visible_metadata_valid:
-        visible_literals = tuple(raw_literals)
-        expected_hashes = tuple(
-            hashlib.sha256(item.encode("utf-8")).hexdigest()
-            for item in visible_literals
-        )
-        if tuple(raw_hashes) != expected_hashes:
-            visible_metadata_valid = False
-    if not visible_metadata_valid:
-        fail(
-            "TRANSLATOR_VISIBLE_TEXT_METADATA_INVALID",
-            "画面内文字の検証情報（個数・順序・hash）が不正です。",
-        )
-        visible_literals = ()
-
-    try:
-        source_dialogue = validate_native_dialogue_blocks(source)
-    except PromptTranslationError as exc:
-        fail(exc.code, str(exc))
-        source_dialogue = ()
-    try:
-        compiled_dialogue = validate_native_dialogue_blocks(compiled)
-    except PromptTranslationError as exc:
-        fail(exc.code, str(exc))
-        compiled_dialogue = ()
-    if source_dialogue != compiled_dialogue:
-        fail(
-            "TRANSLATOR_DIALOGUE_CHANGED",
-            "変換処理が指定台詞を変更・削除・追加したため生成を停止しました。",
-        )
-    if not source_dialogue and sections_valid:
-        soundscape_index = headers.index("overall_soundscape")
-        soundscape_match = section_matches[soundscape_index]
-        soundscape_end = (
-            section_matches[soundscape_index + 1].start()
-            if soundscape_index + 1 < len(section_matches)
-            else len(compiled)
-        )
-        soundscape = compiled[soundscape_match.end() : soundscape_end]
-        if _UNREQUESTED_SPEECH_CUE_RE.search(soundscape):
-            fail(
-                "TRANSLATOR_UNREQUESTED_SPEECH_AUDIO",
-                "台詞指定のない生成で、音響欄へ発話・ナレーション指示が混入しました。",
-            )
-    try:
-        validate_authorized_visible_text_literals(compiled, visible_literals)
-    except PromptTranslationError as exc:
-        fail(
-            (
-                "TRANSLATOR_CJK_OUTSIDE_DIALOGUE"
-                if exc.code == "UNTRANSLATED_JAPANESE"
-                else exc.code
-            ),
-            str(exc),
-        )
-    source_tags = set(_reference_tags(source))
-    compiled_tags = set(_reference_tags(compiled))
-    missing_source_tags = source_tags - compiled_tags
-    if missing_source_tags:
-        fail(
-            "TRANSLATOR_REFERENCE_CHANGED",
-            "変換処理が入力内の参照素材タグを削除または変更したため生成を停止しました。",
-        )
-
-    expected_tags: set[tuple[str, int]]
-    if mode == "omni":
-        tag_kind = {"image": "picture", "video": "video", "audio": "audio"}
-        expected_tags = {
-            (tag_kind[item["kind"]], int(item["index"]))
-            for item in _translator_reference_manifest(references)
-        }
-    elif mode == "i2v":
-        expected_tags = {("picture", 1)}
-    elif mode == "first_last":
-        expected_tags = {("picture", 1), ("picture", 2)}
-    else:
-        expected_tags = set()
-
-    unexpected_tags = compiled_tags - expected_tags
-    if unexpected_tags:
-        fail(
-            "TRANSLATOR_REFERENCE_OUT_OF_RANGE",
-            "変換結果に、この生成モードの入力へ対応しない参照素材タグがあります。",
-        )
-    if mode == "omni" and headers == _OFFICIAL_SIX_SECTION_HEADERS:
-        subject_end = section_matches[1].start()
-        subject_tags = set(_reference_tags(compiled[section_matches[0].end() : subject_end]))
-        if expected_tags - subject_tags:
-            fail(
-                "TRANSLATOR_REFERENCE_DEFINITION_MISSING",
-                "添付したOmni参照素材の一部がsubject_definitionsに定義されていません。",
-            )
-    return diagnostics
 
 
 def _validate_native_clean_prompt(
@@ -623,7 +303,7 @@ def _validate_native_clean_prompt(
             "日本語は普通の二重引用符内の実台詞だけにしてください。",
         )
     diagnostics.extend(
-        _validate_direct_reference_tags(
+        _validate_reference_tags(
             prompt,
             mode=mode,
             references=references,
@@ -722,9 +402,9 @@ class JobManager:
         self._current_process: subprocess.Popen[str] | None = None
         self._current_process_job: ProcessJob | None = None
         self._engine_variant: str | None = None
-        self._current_translation_process: subprocess.Popen[str] | None = None
-        self._current_translation_process_job: ProcessJob | None = None
-        self._current_translation_job_id: str | None = None
+        self._current_prompt_process: subprocess.Popen[str] | None = None
+        self._current_prompt_process_job: ProcessJob | None = None
+        self._current_prompt_job_id: str | None = None
         self._load_existing_jobs()
 
     def _load_existing_jobs(self) -> None:
@@ -756,10 +436,10 @@ class JobManager:
         self._stop.set()
         self._queue.put("")
         with self._lock:
-            owned_translation = self._claim_current_translation_locked()
+            owned_prompt = self._claim_current_prompt_locked()
             owned_engine = self._claim_current_process_locked()
-        if owned_translation != (None, None):
-            self._cleanup_owned_process(*owned_translation)
+        if owned_prompt != (None, None):
+            self._cleanup_owned_process(*owned_prompt)
         if owned_engine != (None, None):
             self._cleanup_owned_process(*owned_engine)
 
@@ -786,7 +466,7 @@ class JobManager:
 
     def cancel(self, job_id: str) -> dict[str, Any] | None:
         owned_process: tuple[subprocess.Popen[str] | None, ProcessJob | None] = (None, None)
-        owned_translation: tuple[subprocess.Popen[str] | None, ProcessJob | None] = (
+        owned_prompt: tuple[subprocess.Popen[str] | None, ProcessJob | None] = (
             None,
             None,
         )
@@ -804,13 +484,13 @@ class JobManager:
             self._save_job(job)
             is_current = self._current_job_id == job_id
             if is_current:
-                # Claim this job's exact engine/translator in the same critical
+                # Claim this job's exact engine/prompt worker in the same critical
                 # section as the job-id comparison. A completed old cancel must
                 # never kill work installed for the next queued job.
                 owned_process = self._claim_current_process_locked()
-                owned_translation = self._claim_current_translation_locked(job_id=job_id)
-        if owned_translation != (None, None):
-            self._cleanup_owned_process(*owned_translation)
+                owned_prompt = self._claim_current_prompt_locked(job_id=job_id)
+        if owned_prompt != (None, None):
+            self._cleanup_owned_process(*owned_prompt)
         if owned_process != (None, None):
             self._cleanup_owned_process(*owned_process)
         return self.get_job(job_id)
@@ -925,7 +605,7 @@ class JobManager:
     def _worker_json(stdout: str) -> Mapping[str, Any]:
         payload = stdout.strip()
         if not payload:
-            raise ValueError("prompt translator returned no JSON")
+            raise ValueError("prompt worker returned no JSON")
         try:
             decoded = json.loads(payload)
         except json.JSONDecodeError as whole_error:
@@ -940,9 +620,9 @@ class JobManager:
                     continue
                 break
             if decoded is None:
-                raise ValueError("prompt translator returned malformed JSON") from whole_error
+                raise ValueError("prompt worker returned malformed JSON") from whole_error
         if not isinstance(decoded, Mapping):
-            raise ValueError("prompt translator JSON must be an object")
+            raise ValueError("prompt worker JSON must be an object")
         return decoded
 
     @staticmethod
@@ -998,7 +678,7 @@ class JobManager:
             final_path.write_text(final_prompt, encoding="utf-8")
         self._write_json_atomic(artifact_dir / "report.json", report)
 
-    def _fail_prompt_translation(
+    def _fail_prompt_processing(
         self,
         job_id: str,
         request: Mapping[str, Any],
@@ -1010,8 +690,8 @@ class JobManager:
         detail: str,
         started: float,
         extra_diagnostics: list[Any] | None = None,
-        translator: Mapping[str, Any] | None = None,
-        translation_required: bool = True,
+        component: Mapping[str, Any] | None = None,
+        model_inference: bool = True,
     ) -> None:
         """Persist an auditable failure and guarantee no stale execution copy."""
 
@@ -1020,12 +700,12 @@ class JobManager:
         private_dir = job_dir / "prompt_processing"
         private_dir.mkdir(parents=True, exist_ok=True)
         self._write_json_atomic(
-            private_dir / "translator_failure.private.json",
+            private_dir / "failure.private.json",
             {
                 "code": code,
                 "detail": detail,
                 "diagnostics": list(extra_diagnostics or []),
-                "translator": dict(translator or {}),
+                "component": dict(component or {}),
             },
         )
         public_detail = _redact_public_text(detail)
@@ -1041,24 +721,12 @@ class JobManager:
                 "fatal": True,
             }
         )
-        model_status = (
-            dict(translator)
-            if isinstance(translator, Mapping)
-            else prompt_translator_status(self.root)
-        )
+        model_status = dict(component) if isinstance(component, Mapping) else {}
         report = dict(processing)
         report.update(
-            status=(
-                "translation_failed"
-                if translation_required
-                else "prompt_compilation_failed"
-            ),
-            mode="raw_guarded",
-            context_ir=False,
-            translation_required=translation_required,
-            translation_status=("failed" if translation_required else "not_required"),
+            status="prompt_processing_failed",
             local_only=True,
-            model_inference=translation_required,
+            model_inference=model_inference,
             model_repo=model_status.get("repo_id"),
             model_revision=model_status.get("revision"),
             source_sha256=hashlib.sha256(source_prompt.encode("utf-8")).hexdigest(),
@@ -1073,11 +741,11 @@ class JobManager:
                 "prompt_processing/original_prompt.txt",
                 "prompt_processing/source_prompt.txt",
                 "prompt_processing/report.json",
-                "prompt_processing/translator_failure.private.json",
+                "prompt_processing/failure.private.json",
             ],
         )
-        if translator:
-            report["translator"] = self._public_worker_metadata(translator)
+        if component:
+            report["component"] = self._public_worker_metadata(component)
         self._write_prompt_artifacts(
             job_dir,
             original_prompt=str(request.get("prompt") or ""),
@@ -1085,27 +753,16 @@ class JobManager:
             final_prompt=None,
             report=report,
         )
-        if code == "TRANSLATOR_MODEL_NOT_READY":
-            public_message = (
-                "この日本語プロンプトには任意のローカル翻訳モデルが必要です。"
-                "翻訳モデルを含めてセットアップを再実行してから、もう一度生成してください。"
-            )
-        elif code == "TRANSLATOR_RUNTIME_MISSING":
-            public_message = (
-                "日本語プロンプト用のローカル変換環境が未準備です。"
-                "セットアップを再実行してから、もう一度生成してください。"
-            )
-        else:
-            public_message = (
-                "プロンプトを安全なH3公式形式へ準備できなかったため、"
-                f"生成を開始しませんでした（{code}）。"
-            )
+        public_message = (
+            "プロンプトを現行のH3生成形式へ準備できなかったため、"
+            f"生成を開始しませんでした（{code}）。"
+        )
         with self._lock:
             current = self._jobs.get(job_id)
             if current and current.get("status") not in TERMINAL_STATES:
                 current.update(
                     status="failed",
-                    phase="プロンプト変換に失敗しました",
+                    phase="プロンプト処理に失敗しました",
                     message=public_message,
                     compiler=report,
                     prompt_processing=report,
@@ -1117,10 +774,10 @@ class JobManager:
                 self._save_job(current)
         self._append_log(
             job_id,
-            f"Prompt translator blocked generation: {code}: {public_detail}",
+            f"Prompt processing blocked generation: {code}: {public_detail}",
         )
 
-    def _run_tracked_prompt_translator(
+    def _run_tracked_prompt_worker(
         self,
         job_id: str,
         command: list[str],
@@ -1129,13 +786,13 @@ class JobManager:
         *,
         timeout: float,
     ) -> tuple[int, str, str] | None:
-        """Run one cancellable translator process owned by ``job_id``.
+        """Run one cancellable prompt worker process owned by ``job_id``.
 
         ``Popen.communicate`` runs in a short-lived reader thread so stdout and
         stderr are drained without deadlocking while the runner remains able to
         observe cancellation, manager shutdown, and the wall-clock timeout.
         Ownership is installed and claimed under ``_lock``; a late cancel for
-        an old job can therefore never terminate a translator belonging to the
+        an old job can therefore never terminate a worker belonging to the
         next queued job.
         """
 
@@ -1170,10 +827,10 @@ class JobManager:
                 and current.get("status") not in TERMINAL_STATES
                 and self._current_job_id == job_id
             )
-            if eligible and self._current_translation_process is None:
-                self._current_translation_process = process
-                self._current_translation_process_job = process_job
-                self._current_translation_job_id = job_id
+            if eligible and self._current_prompt_process is None:
+                self._current_prompt_process = process
+                self._current_prompt_process_job = process_job
+                self._current_prompt_job_id = job_id
                 installed = True
         if not installed:
             self._cleanup_owned_process(process, process_job)
@@ -1194,7 +851,7 @@ class JobManager:
 
         reader = threading.Thread(
             target=communicate,
-            name=f"h3-prompt-translator-{job_id}",
+            name=f"h3-prompt-worker-{job_id}",
             daemon=True,
         )
         reader.start()
@@ -1203,8 +860,8 @@ class JobManager:
             with self._lock:
                 current = self._jobs.get(job_id)
                 still_owned = (
-                    self._current_translation_process is process
-                    and self._current_translation_job_id == job_id
+                    self._current_prompt_process is process
+                    and self._current_prompt_job_id == job_id
                 )
                 abort_requested = (
                     self._stop.is_set()
@@ -1215,7 +872,7 @@ class JobManager:
                 )
             if abort_requested:
                 with self._lock:
-                    owned = self._claim_current_translation_locked(
+                    owned = self._claim_current_prompt_locked(
                         job_id=job_id,
                         process=process,
                     )
@@ -1224,7 +881,7 @@ class JobManager:
                 return None
             if time.monotonic() >= deadline:
                 with self._lock:
-                    owned = self._claim_current_translation_locked(
+                    owned = self._claim_current_prompt_locked(
                         job_id=job_id,
                         process=process,
                     )
@@ -1243,7 +900,7 @@ class JobManager:
                 raise subprocess.TimeoutExpired(command, timeout)
 
         with self._lock:
-            owned = self._claim_current_translation_locked(
+            owned = self._claim_current_prompt_locked(
                 job_id=job_id,
                 process=process,
             )
@@ -1264,7 +921,7 @@ class JobManager:
             error = communication.get("error")
             if error is not None:
                 raise OSError(
-                    "ローカル翻訳ワーカーとの入出力に失敗しました: "
+                    "ローカルプロンプトワーカーとの入出力に失敗しました: "
                     f"{error.__class__.__name__}"
                 ) from error
             return_code = process.returncode
@@ -1277,358 +934,6 @@ class JobManager:
             )
         finally:
             self._cleanup_owned_process(*owned)
-
-    def _translate_and_compile_prompt(
-        self,
-        job_id: str,
-        request: Mapping[str, Any],
-        job_dir: Path,
-        source_prompt: str,
-        processing: Mapping[str, Any],
-        *,
-        started: float,
-        translation_required: bool,
-    ) -> tuple[str, dict[str, Any]] | None:
-        """Run the deterministic worker and validate its complete H3 document."""
-
-        model_status = prompt_translator_status(self.root)
-        if translation_required and not model_status["ready"]:
-            self._fail_prompt_translation(
-                job_id,
-                request,
-                job_dir,
-                source_prompt,
-                processing,
-                code="TRANSLATOR_MODEL_NOT_READY",
-                detail=(
-                    "固定revisionのローカル翻訳モデルが未配置、不完全、またはサイズ不一致です。"
-                ),
-                started=started,
-                translator=model_status,
-                translation_required=True,
-            )
-            return None
-
-        python = self.root / ".comfy-venv" / "Scripts" / "python.exe"
-        if not python.is_file():
-            self._fail_prompt_translation(
-                job_id,
-                request,
-                job_dir,
-                source_prompt,
-                processing,
-                code="TRANSLATOR_RUNTIME_MISSING",
-                detail="ローカル翻訳用の専用Python環境が見つかりません。",
-                started=started,
-                translator=model_status,
-                translation_required=translation_required,
-            )
-            return None
-
-        if not self._update_prompt_progress(
-            job_id,
-            progress=1.25,
-            phase="プロンプトを変換しています",
-            message="入力をローカルで生成モード対応のH3公式形式へコンパイルしています。",
-        ):
-            return None
-
-        raw_references = list(request.get("references") or [])
-        payload: dict[str, Any] = {
-            "prompt": source_prompt,
-            "music_policy": str(request.get("music_policy") or "auto"),
-            "mode": str(request.get("mode") or "t2v"),
-            "references": _translator_reference_manifest(raw_references),
-            "dialogue_events": list(processing.get("dialogue_events") or []),
-            "prompt_processing": dict(processing),
-        }
-        try:
-            payload["duration_seconds"] = float(request.get("num_frames") or 0) / 24.0
-        except (TypeError, ValueError):
-            payload["duration_seconds"] = 0.0
-        if translation_required:
-            payload.update(
-                model_path=os.fspath(
-                    (self.root / PROMPT_TRANSLATOR_MODEL_DIR).resolve()
-                ),
-                model_id=model_status.get("repo_id"),
-                revision=model_status.get("revision"),
-            )
-        env = os.environ.copy()
-        env.update(
-            PYTHONIOENCODING="utf-8",
-            PYTHONUNBUFFERED="1",
-            HF_HUB_OFFLINE="1",
-            TRANSFORMERS_OFFLINE="1",
-        )
-        worker_started = time.monotonic()
-        try:
-            process_result = self._run_tracked_prompt_translator(
-                job_id,
-                [os.fspath(python), "-m", PROMPT_TRANSLATOR_MODULE],
-                json.dumps(payload, ensure_ascii=False),
-                env,
-                timeout=PROMPT_TRANSLATOR_TIMEOUT_SECONDS,
-            )
-        except subprocess.TimeoutExpired:
-            self._fail_prompt_translation(
-                job_id,
-                request,
-                job_dir,
-                source_prompt,
-                processing,
-                code="TRANSLATOR_TIMEOUT",
-                detail=f"ローカル変換が{PROMPT_TRANSLATOR_TIMEOUT_SECONDS}秒以内に完了しませんでした。",
-                started=started,
-                translator=model_status,
-                translation_required=translation_required,
-            )
-            return None
-        except OSError as exc:
-            self._fail_prompt_translation(
-                job_id,
-                request,
-                job_dir,
-                source_prompt,
-                processing,
-                code="TRANSLATOR_PROCESS_FAILED",
-                detail=(
-                    "ローカル翻訳プロセスを開始、または安全に読み取ることができませんでした"
-                    f"（{exc.__class__.__name__}）。"
-                ),
-                started=started,
-                translator=model_status,
-                translation_required=translation_required,
-            )
-            return None
-        if process_result is None:
-            return None
-
-        worker_elapsed_ms = round((time.monotonic() - worker_started) * 1000, 2)
-        return_code, worker_stdout, worker_stderr = process_result
-        private_dir = job_dir / "prompt_processing"
-        private_dir.mkdir(parents=True, exist_ok=True)
-        if worker_stderr:
-            (private_dir / "translator.stderr.log").write_text(
-                worker_stderr,
-                encoding="utf-8",
-            )
-        try:
-            response = self._worker_json(worker_stdout)
-        except ValueError as exc:
-            if worker_stdout:
-                (private_dir / "translator.stdout.log").write_text(
-                    worker_stdout,
-                    encoding="utf-8",
-                )
-            detail = str(exc)
-            code = "TRANSLATOR_RESPONSE_INVALID"
-            if return_code != 0:
-                code = "TRANSLATOR_PROCESS_FAILED"
-                detail = (
-                    f"ローカル翻訳ワーカーが終了コード{return_code}で停止し、"
-                    "有効な失敗レスポンスを返しませんでした。"
-                )
-            self._fail_prompt_translation(
-                job_id,
-                request,
-                job_dir,
-                source_prompt,
-                processing,
-                code=code,
-                detail=detail,
-                started=started,
-                translator={**model_status, "worker_elapsed_ms": worker_elapsed_ms},
-                translation_required=translation_required,
-            )
-            return None
-        self._write_json_atomic(private_dir / "translator_response.json", response)
-
-        worker_diagnostics = list(response.get("diagnostics") or [])
-        worker_metadata = response.get("compiler_metadata")
-        if not isinstance(worker_metadata, Mapping):
-            worker_metadata = {}
-        response_code = str(response.get("code") or "TRANSLATOR_WORKER_FAILED")
-        if response.get("ok") is not True:
-            error = str(response.get("error") or "ローカル翻訳ワーカーが変換を完了できませんでした。")
-            self._fail_prompt_translation(
-                job_id,
-                request,
-                job_dir,
-                source_prompt,
-                processing,
-                code=response_code,
-                detail=error,
-                started=started,
-                extra_diagnostics=worker_diagnostics,
-                translator={
-                    **model_status,
-                    "worker_elapsed_ms": worker_elapsed_ms,
-                    "compiler_metadata": worker_metadata,
-                },
-                translation_required=translation_required,
-            )
-            return None
-        if return_code != 0:
-            self._fail_prompt_translation(
-                job_id,
-                request,
-                job_dir,
-                source_prompt,
-                processing,
-                code="TRANSLATOR_PROCESS_FAILED",
-                detail=(
-                    f"ローカル翻訳ワーカーが成功レスポンス後に終了コード"
-                    f"{return_code}を返しました。"
-                ),
-                started=started,
-                extra_diagnostics=worker_diagnostics,
-                translator={
-                    **model_status,
-                    "worker_elapsed_ms": worker_elapsed_ms,
-                    "compiler_metadata": worker_metadata,
-                },
-                translation_required=translation_required,
-            )
-            return None
-
-        compiled_prompt = response.get("compiled_prompt")
-        if not isinstance(compiled_prompt, str) or not compiled_prompt.strip():
-            self._fail_prompt_translation(
-                job_id,
-                request,
-                job_dir,
-                source_prompt,
-                processing,
-                code="TRANSLATOR_COMPILED_PROMPT_MISSING",
-                detail="翻訳ワーカーが完全なcompiled_promptを返しませんでした。",
-                started=started,
-                extra_diagnostics=worker_diagnostics,
-                translator={
-                    **model_status,
-                    "worker_elapsed_ms": worker_elapsed_ms,
-                    "compiler_metadata": worker_metadata,
-                },
-                translation_required=translation_required,
-            )
-            return None
-        compiled_prompt = compiled_prompt.strip()
-
-        self._update_prompt_progress(
-            job_id,
-            progress=1.65,
-            phase="プロンプトを検証しています",
-            message="生成モード別セクション・台詞・参照素材・画面内文字を検証しています。",
-        )
-        validation_diagnostics = _validate_compiled_prompt(
-            source_prompt,
-            compiled_prompt,
-            mode=str(request.get("mode") or "t2v"),
-            references=list(request.get("references") or []),
-            compiler_metadata=worker_metadata,
-        )
-        worker_has_error = any(
-            isinstance(item, Mapping)
-            and (
-                bool(item.get("fatal"))
-                or str(item.get("severity") or "").casefold() in {"error", "fatal"}
-            )
-            for item in worker_diagnostics
-        )
-        if validation_diagnostics or worker_has_error:
-            self._fail_prompt_translation(
-                job_id,
-                request,
-                job_dir,
-                source_prompt,
-                processing,
-                code="TRANSLATOR_VALIDATION_FAILED",
-                detail="変換後プロンプトの安全検証に失敗しました。",
-                started=started,
-                extra_diagnostics=[*worker_diagnostics, *validation_diagnostics],
-                translator={
-                    **model_status,
-                    "worker_elapsed_ms": worker_elapsed_ms,
-                    "compiler_metadata": worker_metadata,
-                },
-                translation_required=translation_required,
-            )
-            return None
-
-        diagnostics = list(processing.get("diagnostics") or [])
-        public_worker_diagnostics = self._public_worker_metadata(worker_diagnostics)
-        if isinstance(public_worker_diagnostics, list):
-            diagnostics.extend(public_worker_diagnostics)
-        adjustments = list(processing.get("auto_adjustments") or [])
-        adjustments.append(
-            {
-                "code": (
-                    "LOCAL_PROMPT_TRANSLATED"
-                    if translation_required
-                    else "LOCAL_PROMPT_COMPILED"
-                ),
-                "message": (
-                    "日本語の制御指示をローカル翻訳し、H3公式形式へコンパイルしました。"
-                    if translation_required
-                    else "入力を決定論的にH3公式形式へコンパイルしました。"
-                ),
-            }
-        )
-        public_metadata = self._public_worker_metadata(worker_metadata)
-        processing_public = dict(processing)
-        processing_public.update(
-            status=("translated_guarded" if translation_required else "compiled_guarded"),
-            mode=("translated_guarded" if translation_required else "compiled_guarded"),
-            context_ir=False,
-            translation_required=translation_required,
-            translation_status=("completed" if translation_required else "not_required"),
-            local_only=True,
-            model_inference=translation_required,
-            model_repo=(model_status.get("repo_id") if translation_required else None),
-            model_revision=(model_status.get("revision") if translation_required else None),
-            source_sha256=hashlib.sha256(source_prompt.encode("utf-8")).hexdigest(),
-            request_source_sha256=hashlib.sha256(
-                str(request.get("prompt") or "").encode("utf-8")
-            ).hexdigest(),
-            output_sha256=hashlib.sha256(compiled_prompt.encode("utf-8")).hexdigest(),
-            elapsed_ms=round((time.monotonic() - started) * 1000, 2),
-            worker_elapsed_ms=worker_elapsed_ms,
-            compiler_metadata=public_metadata,
-            auto_adjustments=adjustments,
-            diagnostics=diagnostics,
-            artifacts=[
-                "prompt_processing/original_prompt.txt",
-                "prompt_processing/source_prompt.txt",
-                "prompt_processing/final_prompt.txt",
-                "prompt_processing/report.json",
-            ],
-            provenance={
-                "compiler": "h3-studio-local-prompt-translator",
-                "model_repo": (
-                    model_status.get("repo_id") if translation_required else None
-                ),
-                "model_revision": (
-                    model_status.get("revision") if translation_required else None
-                ),
-                "local_only": True,
-                "model_inference": translation_required,
-            },
-        )
-        self._write_prompt_artifacts(
-            job_dir,
-            original_prompt=str(request.get("prompt") or ""),
-            source_prompt=source_prompt,
-            final_prompt=compiled_prompt,
-            report=processing_public,
-        )
-        if not self._update_prompt_progress(
-            job_id,
-            progress=1.9,
-            phase="生成を準備しています",
-            message="H3用プロンプトの変換と検証が完了しました。",
-        ):
-            return None
-        return compiled_prompt, processing_public
 
     def _plan_community_prompt(
         self,
@@ -1645,7 +950,7 @@ class JobManager:
         planner_status = community_planner_status(self.root)
         python = self.root / ".comfy-venv" / "Scripts" / "python.exe"
         if not python.is_file():
-            self._fail_prompt_translation(
+            self._fail_prompt_processing(
                 job_id,
                 request,
                 job_dir,
@@ -1654,15 +959,15 @@ class JobManager:
                 code="PLANNER_RUNTIME_MISSING",
                 detail="ローカルQwenプロンプト用の専用Python環境が見つかりません。",
                 started=started,
-                translator=planner_status,
-                translation_required=True,
+                component=planner_status,
+                model_inference=True,
             )
             return None
 
         raw_references = list(request.get("references") or [])
         payload: dict[str, Any] = {
             "prompt": str(request.get("prompt") or source_prompt),
-            "references": _translator_reference_manifest(raw_references),
+            "references": _reference_manifest(raw_references),
             "dialogue_texts": [
                 str(request.get("dialogue") or "")
             ] if str(request.get("dialogue") or "").strip() else [],
@@ -1714,7 +1019,7 @@ class JobManager:
         private_dir.mkdir(parents=True, exist_ok=True)
         if response is None:
             if not planner_status["ready"]:
-                self._fail_prompt_translation(
+                self._fail_prompt_processing(
                     job_id,
                     request,
                     job_dir,
@@ -1726,8 +1031,8 @@ class JobManager:
                         "不完全、またはサイズ不一致です。"
                     ),
                     started=started,
-                    translator=planner_status,
-                    translation_required=True,
+                    component=planner_status,
+                    model_inference=True,
                 )
                 return None
             if not self._update_prompt_progress(
@@ -1750,7 +1055,7 @@ class JobManager:
             )
             worker_started = time.monotonic()
             try:
-                process_result = self._run_tracked_prompt_translator(
+                process_result = self._run_tracked_prompt_worker(
                     job_id,
                     [os.fspath(python), "-m", COMMUNITY_PLANNER_MODULE],
                     json.dumps(payload, ensure_ascii=False),
@@ -1758,7 +1063,7 @@ class JobManager:
                     timeout=COMMUNITY_PLANNER_TIMEOUT_SECONDS,
                 )
             except subprocess.TimeoutExpired:
-                self._fail_prompt_translation(
+                self._fail_prompt_processing(
                     job_id,
                     request,
                     job_dir,
@@ -1770,12 +1075,12 @@ class JobManager:
                         f"{COMMUNITY_PLANNER_TIMEOUT_SECONDS}秒以内に完了しませんでした。"
                     ),
                     started=started,
-                    translator=planner_status,
-                    translation_required=True,
+                    component=planner_status,
+                    model_inference=True,
                 )
                 return None
             except OSError as exc:
-                self._fail_prompt_translation(
+                self._fail_prompt_processing(
                     job_id,
                     request,
                     job_dir,
@@ -1784,8 +1089,8 @@ class JobManager:
                     code="PLANNER_PROCESS_FAILED",
                     detail=f"ローカルQwenプロンプトプロセスを開始できませんでした（{exc.__class__.__name__}）。",
                     started=started,
-                    translator=planner_status,
-                    translation_required=True,
+                    component=planner_status,
+                    model_inference=True,
                 )
                 return None
             if process_result is None:
@@ -1805,7 +1110,7 @@ class JobManager:
                         worker_stdout,
                         encoding="utf-8",
                     )
-                self._fail_prompt_translation(
+                self._fail_prompt_processing(
                     job_id,
                     request,
                     job_dir,
@@ -1814,12 +1119,12 @@ class JobManager:
                     code="PLANNER_RESPONSE_INVALID",
                     detail=str(exc),
                     started=started,
-                    translator={**planner_status, "worker_elapsed_ms": worker_elapsed_ms},
-                    translation_required=True,
+                    component={**planner_status, "worker_elapsed_ms": worker_elapsed_ms},
+                    model_inference=True,
                 )
                 return None
             if return_code != 0 or response.get("ok") is not True:
-                self._fail_prompt_translation(
+                self._fail_prompt_processing(
                     job_id,
                     request,
                     job_dir,
@@ -1829,15 +1134,15 @@ class JobManager:
                     detail=str(response.get("error") or "Qwenが有効なH3プロンプトを作成できませんでした。"),
                     started=started,
                     extra_diagnostics=list(response.get("diagnostics") or []),
-                    translator={**planner_status, "worker_elapsed_ms": worker_elapsed_ms},
-                    translation_required=True,
+                    component={**planner_status, "worker_elapsed_ms": worker_elapsed_ms},
+                    model_inference=True,
                 )
                 return None
         assert response is not None
         self._write_json_atomic(private_dir / "planner_response.json", response)
         compiled_prompt = response.get("compiled_prompt")
         if not isinstance(compiled_prompt, str) or not compiled_prompt.strip():
-            self._fail_prompt_translation(
+            self._fail_prompt_processing(
                 job_id,
                 request,
                 job_dir,
@@ -1846,8 +1151,8 @@ class JobManager:
                 code="PLANNER_COMPILED_PROMPT_MISSING",
                 detail="Qwen plannerが完全なcompiled_promptを返しませんでした。",
                 started=started,
-                translator=planner_status,
-                translation_required=True,
+                component=planner_status,
+                model_inference=True,
             )
             return None
         if not self._update_prompt_progress(
@@ -1868,7 +1173,7 @@ class JobManager:
             and (bool(item.get("fatal")) or str(item.get("severity") or "").casefold() in {"error", "fatal"})
             for item in worker_diagnostics
         ):
-            self._fail_prompt_translation(
+            self._fail_prompt_processing(
                 job_id,
                 request,
                 job_dir,
@@ -1878,8 +1183,8 @@ class JobManager:
                 detail="公開Comfy用プロンプトの安全検証に失敗しました。",
                 started=started,
                 extra_diagnostics=[*worker_diagnostics, *validation],
-                translator=planner_status,
-                translation_required=True,
+                component=planner_status,
+                model_inference=True,
             )
             return None
 
@@ -1924,7 +1229,6 @@ class JobManager:
         processing_public.update(
             status="community_planned",
             mode="community_planned",
-            context_ir=False,
             translation_required=True,
             translation_status="cache_hit" if cache_hit else "completed",
             local_only=True,
@@ -2021,479 +1325,181 @@ class JobManager:
         return execution_request_path
 
     def _prepare_effective_prompt(self, job_id: str, request_path: Path) -> Path | None:
-        """Prepare the immutable UI request for direct H3 execution.
+        """Prepare a current H3 Studio request for native-clean execution.
 
-        New H3 Studio requests either use the local community planner followed
-        by the native-clean Comfy profile, or a validated English prompt passed
-        byte-for-byte to the same profile.  The legacy compiler remains only
-        for explicitly persisted compatibility requests.
+        Public requests have exactly two prompt paths: community runs the
+        pinned local Qwen planner, while raw_en validates and preserves an
+        English H3 prompt byte-for-byte. Removed legacy modes fail closed.
         """
 
         request = json.loads(request_path.read_text(encoding="utf-8"))
         job_dir = request_path.parent
         started = time.monotonic()
-        effective_prompt = str(request.get("effective_prompt") or request.get("prompt") or "")
-        compiler_public: dict[str, Any]
-        processing = request.get("prompt_processing")
-        processing_mode = (
-            str(processing.get("mode", "raw_guarded"))
-            if isinstance(processing, Mapping)
-            else "raw_guarded"
+        effective_prompt = str(
+            request.get("effective_prompt") or request.get("prompt") or ""
         )
-        if processing_mode != "context_ir":
-            if not effective_prompt.strip():
-                with self._lock:
-                    current = self._jobs.get(job_id)
-                    if current and current.get("status") not in TERMINAL_STATES:
-                        current.update(
-                            status="failed",
-                            phase="入力を確認してください",
-                            message="H3へ送るプロンプトが空です。",
-                            finished_at=utc_now(),
-                            progress_updated_at=utc_now(),
-                        )
-                        self._save_job(current)
-                return None
-            processing_public = dict(processing) if isinstance(processing, Mapping) else {}
-            removed = list(processing_public.get("removed_speech_cues") or [])
-            # Preserve formatter metadata created at the HTTP boundary.  This
-            # method only adds audit information for fragments that the final
-            # raw guard removed; it must not replace native-dialogue events or
-            # punctuation-normalisation notes with the old separate-field UX.
-            adjustments = list(processing_public.get("auto_adjustments") or [])
-            diagnostics = list(processing_public.get("diagnostics") or [])
-            if removed:
-                has_inline_dialogue = bool(processing_public.get("dialogue_count"))
-                removal_message = (
-                    "明示台詞は対象Cut内に保持したまま、本文中の曖昧または重複する"
-                    f"発話指示を{len(removed)}件、生成用プロンプトから除外しました。"
-                    if has_inline_dialogue
-                    else "明示台詞として判定できなかった本文中の曖昧な発話指示を"
-                    f"{len(removed)}件、生成用プロンプトから除外しました。"
-                )
-                adjustments.append(
-                    {
-                        "code": "RAW_SPEECH_CUES_REMOVED",
-                        "message": removal_message,
-                    }
-                )
-                diagnostics.append(
-                    {
-                        "severity": "info",
-                        "code": "RAW_SPEECH_CUES_REMOVED",
-                        "message": (
-                            "除外した原文はrequest.jsonに保持されています。必要な台詞は"
-                            "メインプロンプトの対象Cutへ「実際の言葉」と言う形で記述できます。"
-                        ),
-                        "fatal": False,
-                    }
-                )
-            processing_public.update(
-                auto_adjustments=adjustments,
-                diagnostics=diagnostics,
-            )
-            prompt_processing_mode = str(
-                request.get("prompt_processing_mode")
-                or processing_public.get("processing_mode_requested")
-                or "direct"
-            ).casefold()
-            if prompt_processing_mode not in {
-                "community",
-                "raw_en",
-                "direct",
-                "official_en",
-            }:
-                self._fail_prompt_translation(
-                    job_id,
-                    request,
-                    job_dir,
-                    effective_prompt,
-                    processing_public,
-                    code="INVALID_PROMPT_PROCESSING_MODE",
-                    detail=(
-                        "プロンプト処理方式はcommunity、raw_en、direct、"
-                        "official_enのいずれかで指定してください。"
-                    ),
-                    started=started,
-                    translation_required=False,
-                )
-                return None
-            processing_public.update(
-                processing_mode_requested=prompt_processing_mode,
-                processing_mode_effective=prompt_processing_mode,
-            )
-            mode = str(request.get("mode") or "t2v").casefold()
-            if prompt_processing_mode == "community":
-                planned = self._plan_community_prompt(
-                    job_id,
-                    request,
-                    job_dir,
-                    effective_prompt,
-                    processing_public,
-                    started=started,
-                )
-                if planned is None:
-                    return None
-                effective_prompt, compiler_public = planned
-                return self._finalize_prompt_execution(
-                    job_id,
-                    request_path,
-                    request,
-                    effective_prompt=effective_prompt,
-                    compiler_public=compiler_public,
-                    compiler_source="community_planned",
-                )
-            if prompt_processing_mode == "raw_en":
-                native_diagnostics = _validate_native_clean_prompt(
-                    effective_prompt,
-                    mode=mode,
-                    references=list(request.get("references") or []),
-                )
-                if native_diagnostics:
-                    first = native_diagnostics[0]
-                    self._fail_prompt_translation(
-                        job_id,
-                        request,
-                        job_dir,
-                        effective_prompt,
-                        processing_public,
-                        code=str(first.get("code") or "NATIVE_CLEAN_VALIDATION_FAILED"),
-                        detail=str(first.get("message") or "英語H3プロンプトの検証に失敗しました。"),
-                        started=started,
-                        extra_diagnostics=native_diagnostics[1:],
-                        translation_required=False,
-                    )
-                    return None
-                elapsed_ms = round((time.monotonic() - started) * 1000, 2)
-                processing_public.update(
-                    status="native_raw",
-                    mode="native_raw",
-                    context_ir=False,
-                    translation_required=False,
-                    translation_status="not_required",
-                    local_only=True,
-                    model_inference=False,
-                    workflow_profile="native_clean",
-                    source_sha256=hashlib.sha256(effective_prompt.encode("utf-8")).hexdigest(),
-                    request_source_sha256=hashlib.sha256(
-                        str(request.get("prompt") or "").encode("utf-8")
-                    ).hexdigest(),
-                    output_sha256=hashlib.sha256(effective_prompt.encode("utf-8")).hexdigest(),
-                    elapsed_ms=elapsed_ms,
-                    artifacts=[
-                        "prompt_processing/original_prompt.txt",
-                        "prompt_processing/source_prompt.txt",
-                        "prompt_processing/final_prompt.txt",
-                        "prompt_processing/report.json",
-                    ],
-                    provenance={
-                        "compiler": "public-comfy-raw-prompt",
-                        "local_only": True,
-                        "model_inference": False,
-                    },
-                )
-                self._write_prompt_artifacts(
-                    job_dir,
-                    original_prompt=str(request.get("prompt") or ""),
-                    source_prompt=effective_prompt,
-                    final_prompt=effective_prompt,
-                    report=processing_public,
-                )
-                if not self._update_prompt_progress(
-                    job_id,
-                    progress=1.9,
-                    phase="生成を準備しています",
-                    message="公開Comfy互換プロンプトを検証しました。",
-                ):
-                    return None
-                return self._finalize_prompt_execution(
-                    job_id,
-                    request_path,
-                    request,
-                    effective_prompt=effective_prompt,
-                    compiler_public=processing_public,
-                    compiler_source="native_raw",
-                )
-            try:
-                # This runs before either the deterministic compiler or the
-                # engine.  In particular, an English prompt is not a bypass for
-                # malformed/unsupported native dialogue syntax.
-                validate_native_dialogue_blocks(effective_prompt)
-            except PromptTranslationError as exc:
-                self._fail_prompt_translation(
-                    job_id,
-                    request,
-                    job_dir,
-                    effective_prompt,
-                    processing_public,
-                    code=exc.code,
-                    detail=str(exc),
-                    started=started,
-                    translation_required=False,
-                )
-                return None
+        processing = request.get("prompt_processing")
+        processing_public = (
+            dict(processing) if isinstance(processing, Mapping) else {}
+        )
+        requested_mode = str(
+            request.get("prompt_processing_mode")
+            or processing_public.get("processing_mode_requested")
+            or ""
+        ).casefold()
+        legacy_requested = (
+            requested_mode in {"direct", "official_en", "context_ir"}
+            or str(processing_public.get("mode") or "").casefold() == "context_ir"
+        )
 
-            reference_diagnostics = _validate_direct_reference_tags(
+        if legacy_requested:
+            self._fail_prompt_processing(
+                job_id,
+                request,
+                job_dir,
                 effective_prompt,
-                mode=mode,
-                references=list(request.get("references") or []),
+                processing_public,
+                code="LEGACY_PROMPT_MODE_REMOVED",
+                detail=(
+                    "このjobが指定する旧プロンプト実装は現行H3 Studioから撤去されています。"
+                    "communityまたはraw_enで新しく生成してください。"
+                ),
+                started=started,
+                model_inference=False,
             )
-            if reference_diagnostics:
-                self._fail_prompt_translation(
-                    job_id,
-                    request,
-                    job_dir,
-                    effective_prompt,
-                    processing_public,
-                    code=str(reference_diagnostics[0]["code"]),
-                    detail=reference_diagnostics[0]["message"],
-                    started=started,
-                    translation_required=False,
-                )
+            return None
+        if requested_mode not in {"community", "raw_en"}:
+            self._fail_prompt_processing(
+                job_id,
+                request,
+                job_dir,
+                effective_prompt,
+                processing_public,
+                code="INVALID_PROMPT_PROCESSING_MODE",
+                detail="プロンプト処理方式はcommunityまたはraw_enで指定してください。",
+                started=started,
+                model_inference=False,
+            )
+            return None
+        if not effective_prompt.strip():
+            self._fail_prompt_processing(
+                job_id,
+                request,
+                job_dir,
+                effective_prompt,
+                processing_public,
+                code="PROMPT_EMPTY",
+                detail="H3へ送るプロンプトが空です。",
+                started=started,
+                model_inference=False,
+            )
+            return None
+
+        mode = str(request.get("mode") or "t2v").casefold()
+        processing_public.update(
+            processing_mode_requested=requested_mode,
+            processing_mode_effective=requested_mode,
+            workflow_profile="native_clean",
+        )
+        if requested_mode == "community":
+            planned = self._plan_community_prompt(
+                job_id,
+                request,
+                job_dir,
+                effective_prompt,
+                processing_public,
+                started=started,
+            )
+            if planned is None:
                 return None
-
-            section_headers = tuple(
-                match.group("header").casefold()
-                for match in _OFFICIAL_SECTION_RE.finditer(effective_prompt)
+            compiled_prompt, compiler_public = planned
+            return self._finalize_prompt_execution(
+                job_id,
+                request_path,
+                request,
+                effective_prompt=compiled_prompt,
+                compiler_public=compiler_public,
+                compiler_source="community_planned",
             )
-            if section_headers:
-                # An already-official document is the sole worker bypass.  It
-                # still receives the same structural/dialogue/reference/CJK
-                # validator as worker output, and client data cannot authorize
-                # visible CJK literals on the compiler's behalf.
-                try:
-                    official_literals = classify_visible_text_literals(
-                        effective_prompt
-                    )
-                except PromptTranslationError as exc:
-                    self._fail_prompt_translation(
-                        job_id,
-                        request,
-                        job_dir,
-                        effective_prompt,
-                        processing_public,
-                        code=exc.code,
-                        detail=str(exc),
-                        started=started,
-                        translation_required=False,
-                    )
-                    return None
-                official_metadata = {
-                    "visible_text_literals": list(official_literals),
-                    "visible_text_literal_sha256": [
-                        hashlib.sha256(item.encode("utf-8")).hexdigest()
-                        for item in official_literals
-                    ],
-                }
-                official_diagnostics = _validate_compiled_prompt(
-                    effective_prompt,
-                    effective_prompt,
-                    mode=mode,
-                    references=list(request.get("references") or []),
-                    compiler_metadata=official_metadata,
-                )
-                if official_diagnostics:
-                    self._fail_prompt_translation(
-                        job_id,
-                        request,
-                        job_dir,
-                        effective_prompt,
-                        processing_public,
-                        code="PROMPT_VALIDATION_FAILED",
-                        detail="入力済みH3公式プロンプトの安全検証に失敗しました。",
-                        started=started,
-                        extra_diagnostics=official_diagnostics,
-                        translation_required=False,
-                    )
-                    return None
-                processing_public.update(
-                    status="official_prompt",
-                    mode="official_prompt",
-                    context_ir=False,
-                    translation_required=False,
-                    translation_status="not_required",
-                    local_only=True,
-                    model_inference=False,
-                    elapsed_ms=round((time.monotonic() - started) * 1000, 2),
-                    source_sha256=hashlib.sha256(effective_prompt.encode("utf-8")).hexdigest(),
-                    request_source_sha256=hashlib.sha256(
-                        str(request.get("prompt") or "").encode("utf-8")
-                    ).hexdigest(),
-                    output_sha256=hashlib.sha256(effective_prompt.encode("utf-8")).hexdigest(),
-                    artifacts=[
-                        "prompt_processing/original_prompt.txt",
-                        "prompt_processing/source_prompt.txt",
-                        "prompt_processing/final_prompt.txt",
-                        "prompt_processing/report.json",
-                    ],
-                    provenance={
-                        "compiler": "user-supplied-official-prompt",
-                        "local_only": True,
-                        "model_inference": False,
-                    },
-                    compiler_metadata=official_metadata,
-                )
-                self._write_prompt_artifacts(
-                    job_dir,
-                    original_prompt=str(request.get("prompt") or ""),
-                    source_prompt=effective_prompt,
-                    final_prompt=effective_prompt,
-                    report=processing_public,
-                )
-                compiler_public = processing_public
-                compiler_source = "official_prompt"
-            elif prompt_processing_mode == "direct":
-                # Recommended A/B baseline: H3 accepts natural Japanese control
-                # prose directly.  Preserve the formatter/guard output byte for
-                # byte and apply only the native dialogue safety boundary here;
-                # no optional translator, Python worker, or official wrapper is
-                # required for this route.
-                processing_public.update(
-                    status="direct",
-                    mode="raw_guarded",
-                    context_ir=False,
-                    translation_required=False,
-                    translation_status="not_requested",
-                    local_only=True,
-                    model_inference=False,
-                    source_sha256=hashlib.sha256(
-                        effective_prompt.encode("utf-8")
-                    ).hexdigest(),
-                    request_source_sha256=hashlib.sha256(
-                        str(request.get("prompt") or "").encode("utf-8")
-                    ).hexdigest(),
-                    output_sha256=hashlib.sha256(
-                        effective_prompt.encode("utf-8")
-                    ).hexdigest(),
-                    elapsed_ms=round((time.monotonic() - started) * 1000, 2),
-                    artifacts=[
-                        "prompt_processing/original_prompt.txt",
-                        "prompt_processing/source_prompt.txt",
-                        "prompt_processing/final_prompt.txt",
-                        "prompt_processing/report.json",
-                    ],
-                    provenance={
-                        "compiler": "h3-studio-direct-prompt",
-                        "local_only": True,
-                        "model_inference": False,
-                    },
-                )
-                self._write_prompt_artifacts(
-                    job_dir,
-                    original_prompt=str(request.get("prompt") or ""),
-                    source_prompt=effective_prompt,
-                    final_prompt=effective_prompt,
-                    report=processing_public,
-                )
-                compiler_public = processing_public
-                compiler_source = "direct"
-            else:
-                try:
-                    translation_required = requires_translation(effective_prompt)
-                except PromptTranslationError as exc:
-                    self._fail_prompt_translation(
-                        job_id,
-                        request,
-                        job_dir,
-                        effective_prompt,
-                        processing_public,
-                        code=exc.code,
-                        detail=str(exc),
-                        started=started,
-                        translation_required=False,
-                    )
-                    return None
-                compiled = self._translate_and_compile_prompt(
-                    job_id,
-                    request,
-                    job_dir,
-                    effective_prompt,
-                    processing_public,
-                    started=started,
-                    translation_required=translation_required,
-                )
-                if compiled is None:
-                    return None
-                effective_prompt, compiler_public = compiled
-                compiler_source = (
-                    "translated_guarded"
-                    if translation_required
-                    else "compiled_guarded"
-                )
-        else:
-            compiler_source = "legacy_fallback"
-            try:
-                from .context_ir import compile_request, write_artifacts
 
-                result = compile_request(request)
-                result = write_artifacts(result, job_dir)
-                compiler_public = result.to_public_dict()
-                compiler_public["elapsed_ms"] = round((time.monotonic() - started) * 1000, 2)
-                if result.fatal or result.ir_text is None:
-                    fatal_messages = [
-                        item.message
-                        for item in result.diagnostics
-                        if getattr(item, "fatal", False)
-                    ]
-                    message = fatal_messages[0] if fatal_messages else "入力をH3用命令へ変換できませんでした。"
-                    with self._lock:
-                        current = self._jobs.get(job_id)
-                        if current and current.get("status") not in TERMINAL_STATES:
-                            current.update(
-                                status="failed",
-                                phase="入力を確認してください",
-                                message=message,
-                                compiler=compiler_public,
-                                auto_adjustments=compiler_public.get("auto_adjustments", []),
-                                diagnostics=compiler_public.get("diagnostics", []),
-                                finished_at=utc_now(),
-                                progress_updated_at=utc_now(),
-                            )
-                            self._save_job(current)
-                    return None
-                effective_prompt = result.ir_text
-                compiler_source = "context_ir"
-            except Exception as exc:
-                elapsed_ms = round((time.monotonic() - started) * 1000, 2)
-                compiler_public = {
-                    "status": "degraded_fallback",
-                    "elapsed_ms": elapsed_ms,
-                    "provenance": {
-                        "compiler": "h3-studio-safe-fallback",
-                        "ai_inference": False,
-                    },
-                    "auto_adjustments": [],
-                    "diagnostics": [
-                        {
-                            "severity": "info",
-                            "code": "COMPILER_FALLBACK",
-                            "message": (
-                                "IR自動変換を完了できなかったため、元の指示を保った最小形式で生成しました。"
-                            ),
-                            "fatal": False,
-                        }
-                    ],
-                }
-                compiler_dir = job_dir / "compiler"
-                compiler_dir.mkdir(parents=True, exist_ok=True)
-                internal = {
-                    **compiler_public,
-                    "exception_type": exc.__class__.__name__,
-                    "exception": str(exc),
-                }
-                self._write_json_atomic(compiler_dir / "compiler_result.json", internal)
-                (compiler_dir / "final_ir.txt").write_text(effective_prompt, encoding="utf-8")
-                self._append_log(job_id, f"Context-IR fallback: {exc.__class__.__name__}: {exc}")
+        native_diagnostics = _validate_native_clean_prompt(
+            effective_prompt,
+            mode=mode,
+            references=list(request.get("references") or []),
+        )
+        if native_diagnostics:
+            first = native_diagnostics[0]
+            self._fail_prompt_processing(
+                job_id,
+                request,
+                job_dir,
+                effective_prompt,
+                processing_public,
+                code=str(
+                    first.get("code") or "NATIVE_CLEAN_VALIDATION_FAILED"
+                ),
+                detail=str(
+                    first.get("message")
+                    or "英語H3プロンプトの検証に失敗しました。"
+                ),
+                started=started,
+                extra_diagnostics=native_diagnostics[1:],
+                model_inference=False,
+            )
+            return None
 
-        # Keep request.json as the immutable record of exactly what the user
-        # submitted. Only the derived execution copy reaches H3.
+        elapsed_ms = round((time.monotonic() - started) * 1000, 2)
+        processing_public.update(
+            status="native_raw",
+            mode="raw_en",
+            translation_required=False,
+            translation_status="not_required",
+            local_only=True,
+            model_inference=False,
+            workflow_profile="native_clean",
+            source_sha256=hashlib.sha256(
+                effective_prompt.encode("utf-8")
+            ).hexdigest(),
+            request_source_sha256=hashlib.sha256(
+                str(request.get("prompt") or "").encode("utf-8")
+            ).hexdigest(),
+            output_sha256=hashlib.sha256(
+                effective_prompt.encode("utf-8")
+            ).hexdigest(),
+            elapsed_ms=elapsed_ms,
+            artifacts=[
+                "prompt_processing/original_prompt.txt",
+                "prompt_processing/source_prompt.txt",
+                "prompt_processing/final_prompt.txt",
+                "prompt_processing/report.json",
+            ],
+            provenance={
+                "compiler": "public-comfy-raw-prompt",
+                "local_only": True,
+                "model_inference": False,
+            },
+        )
+        self._write_prompt_artifacts(
+            job_dir,
+            original_prompt=str(request.get("prompt") or ""),
+            source_prompt=effective_prompt,
+            final_prompt=effective_prompt,
+            report=processing_public,
+        )
+        if not self._update_prompt_progress(
+            job_id,
+            progress=1.9,
+            phase="生成を準備しています",
+            message="英語H3プロンプトの検証が完了しました。",
+        ):
+            return None
         return self._finalize_prompt_execution(
             job_id,
             request_path,
             request,
             effective_prompt=effective_prompt,
-            compiler_public=compiler_public,
-            compiler_source=compiler_source,
+            compiler_public=processing_public,
+            compiler_source="native_raw",
         )
 
     @staticmethod
@@ -2649,23 +1655,23 @@ class JobManager:
         self._engine_variant = None
         return process, process_job
 
-    def _claim_current_translation_locked(
+    def _claim_current_prompt_locked(
         self,
         *,
         job_id: str | None = None,
         process: subprocess.Popen[str] | None = None,
     ) -> tuple[subprocess.Popen[str] | None, ProcessJob | None]:
-        """Atomically detach one exact translator; caller must hold ``_lock``."""
+        """Atomically detach one exact prompt worker; caller must hold ``_lock``."""
 
-        current = self._current_translation_process
-        if job_id is not None and self._current_translation_job_id != job_id:
+        current = self._current_prompt_process
+        if job_id is not None and self._current_prompt_job_id != job_id:
             return None, None
         if process is not None and current is not process:
             return None, None
-        process_job = self._current_translation_process_job
-        self._current_translation_process = None
-        self._current_translation_process_job = None
-        self._current_translation_job_id = None
+        process_job = self._current_prompt_process_job
+        self._current_prompt_process = None
+        self._current_prompt_process_job = None
+        self._current_prompt_job_id = None
         return current, process_job
 
     def _terminate_current_process(self) -> None:

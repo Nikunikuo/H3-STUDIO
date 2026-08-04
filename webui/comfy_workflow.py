@@ -43,8 +43,8 @@ FIRST_FRAME_NODE_ID = "20"
 LAST_FRAME_NODE_ID = "21"
 
 SUPPORTED_MODES = frozenset({"t2v", "i2v", "first_last", "omni"})
-DEFAULT_WORKFLOW_PROFILE = "studio_compat"
-SUPPORTED_WORKFLOW_PROFILES = frozenset({DEFAULT_WORKFLOW_PROFILE, "native_clean"})
+DEFAULT_WORKFLOW_PROFILE = "native_clean"
+SUPPORTED_WORKFLOW_PROFILES = frozenset({DEFAULT_WORKFLOW_PROFILE})
 SUPPORTED_SCHEDULERS = frozenset({"auto", "normal", "simple"})
 EMBEDDED_VIDEO_AUDIO_POLICIES = frozenset({"ignore", "reference", "reuse"})
 DEFAULT_SCHEDULER_BY_VARIANT = {

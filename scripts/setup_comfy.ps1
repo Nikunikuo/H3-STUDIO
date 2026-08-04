@@ -2,9 +2,7 @@ param(
     [string]$PythonExe = "",
     [switch]$VerifyOnly,
     [switch]$SkipModelHash,
-    [switch]$AcceptMiniMaxH3License,
-    [switch]$AcceptPromptTranslatorLicense,
-    [switch]$SkipPromptTranslator
+    [switch]$AcceptMiniMaxH3License
 )
 
 Set-StrictMode -Version Latest
@@ -31,18 +29,12 @@ $ModelLockPath = Join-Path $Root "comfy_models.lock.json"
 $PromptPlannerLockPath = Join-Path $Root "prompt_planner.lock.json"
 $PromptPlannerRoot = Join-Path $Root "models\prompt_planner\Qwen3-4B-Instruct-2507"
 $PromptPlannerProvenancePath = Join-Path $PromptPlannerRoot "h3-studio-provenance.json"
-$PromptTranslatorLockPath = Join-Path $Root "prompt_translator.lock.json"
-$PromptTranslatorRoot = Join-Path $Root "models\prompt_translator"
 $ComfySha = "14b05228cef127ce529bc0c08660770d4af3e9a8"
 $SageVersion = "2.2.0+cu130torch2.10.0andhigher.post6"
 $SageWheelName = "sageattention-2.2.0+cu130torch2.10.0andhigher.post6-cp310-abi3-win_amd64.whl"
 $SageWheelUrl = "https://github.com/woct0rdho/SageAttention/releases/download/v2.2.0-windows.post6/sageattention-2.2.0%2Bcu130torch2.10.0andhigher.post6-cp310-abi3-win_amd64.whl"
 $SageWheelBytes = [int64]16656067
 $SageWheelSha256 = "1635283f5c01ec3cda58a784d0d7eabbcaffaf9511d1b263db4750e1ed7958bb"
-
-if ($AcceptPromptTranslatorLicense -and $SkipPromptTranslator) {
-    throw "Choose either -AcceptPromptTranslatorLicense or -SkipPromptTranslator, not both."
-}
 
 function Test-FixedCheckout {
     param(
@@ -129,13 +121,6 @@ function Read-PromptPlannerLock {
         throw "Prompt planner model lock is missing: $PromptPlannerLockPath"
     }
     return Get-Content -LiteralPath $PromptPlannerLockPath -Raw -Encoding UTF8 | ConvertFrom-Json
-}
-
-function Read-PromptTranslatorLock {
-    if (-not (Test-Path -LiteralPath $PromptTranslatorLockPath)) {
-        throw "Prompt translator model lock is missing: $PromptTranslatorLockPath"
-    }
-    return Get-Content -LiteralPath $PromptTranslatorLockPath -Raw -Encoding UTF8 | ConvertFrom-Json
 }
 
 function Test-ComfyModels {
@@ -341,89 +326,6 @@ function Get-PromptPlannerInventory {
     }
 }
 
-function Test-PromptTranslatorFiles {
-    param(
-        [Parameter(Mandatory = $true)]$Lock,
-        [switch]$FullHash
-    )
-
-    $total = [int64]0
-    foreach ($entry in $Lock.files) {
-        $path = Join-Path $Root ([string]$entry.path)
-        if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-            throw "Optional legacy LFM translator file is missing: $path. Repair it with -AcceptPromptTranslatorLicense, or rerun with -SkipPromptTranslator. The required Qwen community planner and raw_en pass-through remain available."
-        }
-        $item = Get-Item -LiteralPath $path
-        $expectedSize = [int64]$entry.size
-        if ($item.Length -ne $expectedSize) {
-            throw "Optional legacy LFM translator size mismatch for $path`: expected $expectedSize, got $($item.Length). Preserve it for inspection, then remove or replace it before repair; alternatively rerun with -SkipPromptTranslator. The required Qwen community planner and raw_en pass-through remain available."
-        }
-        $total += $item.Length
-
-        if ($FullHash) {
-            Write-Host "SHA-256: $($entry.path)"
-            $actualHash = (Get-FileHash -LiteralPath $path -Algorithm SHA256).Hash.ToLowerInvariant()
-            $expectedHash = ([string]$entry.sha256).ToLowerInvariant()
-            if ($actualHash -ne $expectedHash) {
-                throw "Optional legacy LFM translator SHA-256 mismatch for $path`: expected $expectedHash, got $actualHash. Preserve it for inspection, then remove or replace it before repair; alternatively rerun with -SkipPromptTranslator. The required Qwen community planner and raw_en pass-through remain available."
-            }
-        }
-    }
-
-    $expectedTotal = [int64]$Lock.verification.total_bytes
-    if ($total -ne $expectedTotal) {
-        throw "Prompt translator model total size mismatch: expected $expectedTotal, got $total"
-    }
-    Write-Host "Prompt translator verified: $($Lock.files.Count) files, $total bytes$(if ($FullHash) { ', SHA-256 matched' } else { ', sizes matched' })."
-}
-
-function Get-PromptTranslatorInventory {
-    param([Parameter(Mandatory = $true)]$Lock)
-
-    $missingBytes = [int64]0
-    $presentFiles = 0
-    $issues = [System.Collections.Generic.List[string]]::new()
-    $expectedFiles = @($Lock.files)
-    foreach ($entry in $expectedFiles) {
-        $path = Join-Path $Root ([string]$entry.path)
-        if (Test-Path -LiteralPath $path -PathType Leaf) {
-            $presentFiles++
-            $actualSize = (Get-Item -LiteralPath $path).Length
-            if ($actualSize -ne [int64]$entry.size) {
-                $issues.Add("Wrong byte size: $path (expected $($entry.size), got $actualSize)")
-            }
-        } elseif (Test-Path -LiteralPath $path) {
-            $presentFiles++
-            $issues.Add("Expected a regular file but found another filesystem object: $path")
-        } else {
-            $missingBytes += [int64]$entry.size
-        }
-    }
-
-    $status = if ($presentFiles -eq 0) {
-        "absent"
-    } elseif ($presentFiles -eq $expectedFiles.Count -and $issues.Count -eq 0) {
-        "complete"
-    } else {
-        "incomplete"
-    }
-
-    return [pscustomobject]@{
-        Status = $status
-        ExpectedFileCount = $expectedFiles.Count
-        PresentFileCount = $presentFiles
-        MissingBytes = $missingBytes
-        Issues = @($issues)
-    }
-}
-
-function Write-PromptTranslatorUnavailableWarning {
-    param([Parameter(Mandatory = $true)][string]$Reason)
-
-    Write-Warning "$Reason The required Qwen community planner remains available. Only the optional legacy LFM translation/A-B comparison route is unavailable."
-    Write-Host "To install or repair it later, review MODEL_TERMS.md and rerun setup with -AcceptPromptTranslatorLicense."
-}
-
 function Assert-H3NvidiaPreflight {
     Assert-H3Command -Name "nvidia-smi.exe" -InstallHint "Install or update the NVIDIA display driver, then reboot."
     $rows = @(& nvidia-smi.exe --id=0 --query-gpu=name,memory.total,driver_version --format=csv,noheader,nounits 2>&1)
@@ -584,63 +486,11 @@ else:
     }
 }
 
-function Test-PromptTranslatorRuntime {
-    if (-not (Test-Path -LiteralPath $ComfyPython -PathType Leaf)) {
-        throw "ComfyUI Python environment is missing: $ComfyPython"
-    }
-
-    $runtimeProbe = @'
-import pathlib
-import sys
-
-from transformers import AutoConfig, AutoTokenizer, Lfm2ForCausalLM
-
-model_root = pathlib.Path(sys.argv[1]).resolve()
-config = AutoConfig.from_pretrained(
-    model_root,
-    local_files_only=True,
-    trust_remote_code=False,
-)
-assert config.model_type == 'lfm2', config.model_type
-assert list(config.architectures or []) == ['Lfm2ForCausalLM'], config.architectures
-assert Lfm2ForCausalLM.config_class.model_type == 'lfm2'
-
-tokenizer = AutoTokenizer.from_pretrained(
-    model_root,
-    local_files_only=True,
-    trust_remote_code=False,
-)
-rendered = tokenizer.apply_chat_template(
-    [
-        {'role': 'system', 'content': 'Translate to English.'},
-        {'role': 'user', 'content': '\u3053\u3093\u306b\u3061\u306f\u3002'},
-    ],
-    tokenize=False,
-    add_generation_prompt=True,
-)
-for required in ('Translate to English.', '\u3053\u3093\u306b\u3061\u306f\u3002'):
-    assert required in rendered, rendered
-
-print('prompt_translator_model_type', config.model_type)
-print('prompt_translator_architecture', config.architectures[0])
-print('prompt_translator_tokenizer', tokenizer.__class__.__name__)
-print('prompt_translator_chat_template', 'ok')
-'@
-    & $ComfyPython -c $runtimeProbe $PromptTranslatorRoot
-    if ($LASTEXITCODE -ne 0) {
-        throw "Prompt translator runtime validation failed. Repair its pinned files/runtime, or rerun with -SkipPromptTranslator. The required Qwen community planner remains available; only the optional legacy LFM A/B route is disabled."
-    }
-}
-
 $modelLock = Read-ModelLock
 $promptPlannerLock = Read-PromptPlannerLock
-$promptTranslatorLock = Read-PromptTranslatorLock
 $missingBytes = Get-MissingModelBytes -Lock $modelLock
 $promptPlannerInventory = Get-PromptPlannerInventory -Lock $promptPlannerLock
 $promptPlannerMissingBytes = [int64]0
-$promptTranslatorInventory = Get-PromptTranslatorInventory -Lock $promptTranslatorLock
-$promptTranslatorMissingBytes = [int64]0
-$validatePromptTranslator = $false
 
 if ($promptPlannerInventory.Status -eq "absent") {
     if ($VerifyOnly) {
@@ -666,41 +516,6 @@ Setup-H3-Studio.cmd. A clean partial download is resumed from the fixed revision
     $promptPlannerMissingBytes = [int64]$promptPlannerInventory.MissingBytes
 }
 
-if ($SkipPromptTranslator) {
-    Write-PromptTranslatorUnavailableWarning -Reason "Optional prompt translator setup was explicitly skipped. Its local files, if any, were left untouched and were not validated."
-} elseif ($promptTranslatorInventory.Status -eq "absent") {
-    if ($VerifyOnly) {
-        Write-PromptTranslatorUnavailableWarning -Reason "Optional prompt translator is not installed."
-    } else {
-        $promptTranslatorMissingBytes = [int64]$promptTranslatorLock.verification.total_bytes
-        $validatePromptTranslator = $true
-    }
-} elseif ($promptTranslatorInventory.Status -eq "incomplete") {
-    $inventorySummary = "Detected $($promptTranslatorInventory.PresentFileCount) of $($promptTranslatorInventory.ExpectedFileCount) pinned prompt translator files."
-    $issueDetails = if ($promptTranslatorInventory.Issues.Count -gt 0) {
-        "`n" + (($promptTranslatorInventory.Issues | ForEach-Object { "- $_" }) -join "`n")
-    } else {
-        ""
-    }
-
-    if ($VerifyOnly -or $promptTranslatorInventory.Issues.Count -gt 0) {
-        throw @"
-The optional prompt translator is incomplete or corrupt. $inventorySummary$issueDetails
-
-Preserve unexpected files for inspection, then remove or replace them and rerun setup with
--AcceptPromptTranslatorLicense. To continue without changing these files, rerun this command
-with -SkipPromptTranslator. The required Qwen community planner remains available; only the
-optional legacy LFM translation/A-B comparison route is unavailable.
-"@
-    }
-
-    # A clean partial download can be resumed after the separate license acknowledgement.
-    $promptTranslatorMissingBytes = [int64]$promptTranslatorInventory.MissingBytes
-    $validatePromptTranslator = $true
-} else {
-    $validatePromptTranslator = $true
-}
-
 if ($env:OS -ne "Windows_NT") {
     throw "This pinned H3 Studio setup currently supports 64-bit Windows only."
 }
@@ -712,12 +527,6 @@ if ($VerifyOnly) {
     Test-PromptPlannerFiles -Lock $promptPlannerLock -FullHash:(-not $SkipModelHash)
     Test-PromptPlannerProvenance -Lock $promptPlannerLock
     Test-PromptPlannerRuntime
-    if ($validatePromptTranslator) {
-        # The translator is only about 714 MB, so always hash it even when the
-        # 59 GiB H3 model hash pass is intentionally skipped during normal launch.
-        Test-PromptTranslatorFiles -Lock $promptTranslatorLock -FullHash
-        Test-PromptTranslatorRuntime
-    }
     Write-Host "ComfyUI verification completed without modifying the environment."
     return
 }
@@ -734,33 +543,15 @@ If you are eligible and accept it, rerun with -AcceptMiniMaxH3License or use Set
 "@
 }
 
-if ($promptTranslatorMissingBytes -gt 0 -and -not $AcceptPromptTranslatorLicense) {
-    $translatorLicenseUrl = [string]$promptTranslatorLock.source.license_url
-    throw @"
-The local prompt translator model is not included in this repository.
-Before downloading $promptTranslatorMissingBytes bytes, review the LFM Open License v1.0:
-$translatorLicenseUrl
-
-The license includes redistribution and notice conditions plus a revenue-based commercial-use
-restriction; review the controlling Section 5 text. If the license applies to you and you accept it, rerun with
-  -AcceptPromptTranslatorLicense. Otherwise rerun with -SkipPromptTranslator to continue with
-  the required Qwen community planner; only this legacy LFM A/B translator will be unavailable.
-  Setup-H3-Studio.cmd skips this legacy component by default.
-"@
-}
-
-if ($missingBytes -gt 0 -or $promptPlannerMissingBytes -gt 0 -or $promptTranslatorMissingBytes -gt 0) {
+if ($missingBytes -gt 0 -or $promptPlannerMissingBytes -gt 0) {
     $driveName = [IO.Path]::GetPathRoot($Root).TrimEnd('\').TrimEnd(':')
     $drive = Get-PSDrive -Name $driveName
-    $requiredFree = $missingBytes + $promptPlannerMissingBytes + $promptTranslatorMissingBytes
+    $requiredFree = $missingBytes + $promptPlannerMissingBytes
     if ($missingBytes -gt 0) {
         $requiredFree += 25GB
     }
     if ($promptPlannerMissingBytes -gt 0) {
         $requiredFree += 10GB
-    }
-    if ($promptTranslatorMissingBytes -gt 0) {
-        $requiredFree += 2GB
     }
     if ([int64]$drive.Free -lt $requiredFree) {
         throw "Not enough free disk space for the runtime, models, and safety margins: need $requiredFree bytes, available $($drive.Free)."
@@ -775,11 +566,6 @@ if ($missingBytes -gt 0) {
 if ($promptPlannerMissingBytes -gt 0) {
     Write-Host "Required Apache-2.0 Qwen prompt planner download: $promptPlannerMissingBytes bytes from fixed revision $($promptPlannerLock.source.revision)."
     Write-Host "No additional click-through license acknowledgement is required; see MODEL_TERMS.md for attribution and the controlling license."
-}
-
-if ($promptTranslatorMissingBytes -gt 0) {
-    Write-Host "LFM Open License v1.0 accepted for this setup invocation."
-    Write-Host "Prompt translator download: $promptTranslatorMissingBytes bytes from fixed revision $($promptTranslatorLock.source.revision)."
 }
 
 Assert-H3NvidiaPreflight
@@ -895,42 +681,15 @@ if ($promptPlannerMissingBytes -gt 0) {
     Write-Host "All fixed-revision Qwen prompt planner files are already present; download skipped."
 }
 
-if ($validatePromptTranslator -and $promptTranslatorMissingBytes -gt 0) {
-    New-Item -ItemType Directory -Path $PromptTranslatorRoot -Force | Out-Null
-    $translatorPatterns = @($promptTranslatorLock.files | ForEach-Object {
-        ([string]$_.path).Substring("models/prompt_translator/".Length).Replace('\', '/')
-    })
-    $translatorRepoId = [string]$promptTranslatorLock.source.repo_id
-    $translatorRevision = [string]$promptTranslatorLock.source.revision
-    & $ComfyPython -c "import sys; from huggingface_hub import snapshot_download; snapshot_download(repo_id=sys.argv[1], revision=sys.argv[2], local_dir=sys.argv[3], allow_patterns=sys.argv[4:], max_workers=2)" `
-        $translatorRepoId $translatorRevision $PromptTranslatorRoot @translatorPatterns
-    if ($LASTEXITCODE -ne 0) {
-        throw "Fixed-revision prompt translator download failed. It is safe to rerun this script to resume."
-    }
-} elseif ($validatePromptTranslator) {
-    Write-Host "All fixed-revision prompt translator files are already present; download skipped."
-} else {
-    Write-Host "Optional prompt translator download and validation skipped."
-}
-
 Test-ComfyRuntime
 Test-ComfyModels -Lock $modelLock -FullHash:(-not $SkipModelHash)
 Test-PromptPlannerFiles -Lock $promptPlannerLock -FullHash
 Write-PromptPlannerProvenance -Lock $promptPlannerLock
 Test-PromptPlannerProvenance -Lock $promptPlannerLock
 Test-PromptPlannerRuntime -LoadWeights:(-not $VerifyOnly)
-if ($validatePromptTranslator) {
-    Test-PromptTranslatorFiles -Lock $promptTranslatorLock -FullHash
-    Test-PromptTranslatorRuntime
-}
 
 Write-Host "ComfyUI setup complete."
 Write-Host "ComfyUI SHA: $ComfySha"
 Write-Host "Model revision: $($modelLock.source.revision)"
 Write-Host "Prompt planner revision: $($promptPlannerLock.source.revision)"
-if ($validatePromptTranslator) {
-    Write-Host "Prompt translator revision: $($promptTranslatorLock.source.revision)"
-} else {
-    Write-Host "Legacy LFM prompt translator: unavailable (required Qwen community planner is ready)"
-}
 Write-Host "Attention backend: $AttentionBackend$(if ($AttentionBackend -eq 'sage') { " ($SageVersion; verified wheel)" } else { '' })"

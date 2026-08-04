@@ -18,8 +18,6 @@ if os.fspath(ROOT) not in sys.path:
 
 import webui.job_manager as job_manager_module  # noqa: E402
 from webui import comfy_engine_worker as worker  # noqa: E402
-from webui.job_manager import _translator_reference_manifest  # noqa: E402
-from webui.prompt_translation import translate_and_compile_prompt  # noqa: E402
 
 
 class _IsolatedManager:
@@ -45,8 +43,12 @@ class _IsolatedManager:
 
 class StandaloneAudioPolicyTests(unittest.TestCase):
     DIALOGUE_PROMPT = (
-        'Cut 1\nThe woman shown in <Picture 1> says "Hello." using <Audio 1>.\n'
+        'Cut 1\nThe woman shown in <Picture 1> says "こんにちは。" exactly once.\n'
         "She closes the door while ocean surf continues."
+    )
+    AUDIO_REFERENCE_PROMPT = (
+        'Cut 1\nThe woman shown in <Picture 1> says "こんにちは。" exactly once, '
+        "using <Audio 1> as the full audiovisual reference."
     )
 
     @classmethod
@@ -87,30 +89,47 @@ class StandaloneAudioPolicyTests(unittest.TestCase):
 
     def _post(self, *, prompt: str, policy: str | None, audio_count: int = 1):
         form = {
-            "mode": "omni", "style": "natural", "prompt": prompt,
-            "width": "640", "height": "384", "num_frames": "124",
-            "steps": "7", "seed": "424242", "acceleration": "off",
-            "ref_image_size": "match", "prompt_processing_mode": "official_en",
-            "audio_preset": "auto", "dialogue": "", "soundscape": "",
-            "music_policy": "auto", "audio_gain_db": "0",
+            "mode": "omni",
+            "style": "natural",
+            "prompt": prompt,
+            "width": "640",
+            "height": "384",
+            "num_frames": "124",
+            "steps": "7",
+            "seed": "424242",
+            "acceleration": "off",
+            "ref_image_size": "match",
+            "prompt_processing_mode": "raw_en",
+            "audio_preset": "auto",
+            "dialogue": "",
+            "soundscape": "",
+            "music_policy": "auto",
+            "audio_gain_db": "0",
         }
         if policy is not None:
             form["standalone_audio_policy"] = policy
         files = [("references", ("character.png", b"image", "image/png"))]
         files += [
-            ("references", (f"voice-{n}.wav", b"audio", "audio/wav"))
-            for n in range(1, audio_count + 1)
+            ("references", (f"voice-{number}.wav", b"audio", "audio/wav"))
+            for number in range(1, audio_count + 1)
         ]
         return self.client.post(
-            "/api/jobs", data=form, files=files,
-            headers={self.server.LOCAL_MUTATION_HEADER: self.server.LOCAL_MUTATION_VALUE},
+            "/api/jobs",
+            data=form,
+            files=files,
+            headers={
+                self.server.LOCAL_MUTATION_HEADER:
+                    self.server.LOCAL_MUTATION_VALUE
+            },
         )
 
     def _request(self) -> dict:
         self.assertEqual(len(self.manager.submitted), 1)
         job_id = self.manager.submitted[0]["id"]
         return json.loads(
-            (self.manager.jobs_dir / job_id / "request.json").read_text(encoding="utf-8")
+            (self.manager.jobs_dir / job_id / "request.json").read_text(
+                encoding="utf-8"
+            )
         )
 
     def _staged(self, request: dict) -> dict:
@@ -118,12 +137,15 @@ class StandaloneAudioPolicyTests(unittest.TestCase):
         staged, _ = worker.stage_request_inputs(request, paths, self.test_root)
         return staged
 
-    def test_dialogue_priority_excludes_audio_from_worker_and_official_compile(self) -> None:
+    def test_dialogue_priority_excludes_audio_without_rewriting_prompt(self) -> None:
         response = self._post(
-            prompt=self.DIALOGUE_PROMPT, policy="dialogue_priority", audio_count=2
+            prompt=self.DIALOGUE_PROMPT,
+            policy="dialogue_priority",
+            audio_count=2,
         )
         self.assertEqual(response.status_code, 200, response.text)
         request = self._request()
+        self.assertEqual(request["effective_prompt"], self.DIALOGUE_PROMPT)
         self.assertEqual(
             [item["kind"] for item in request["uploaded_references"]],
             ["image", "audio", "audio"],
@@ -131,36 +153,41 @@ class StandaloneAudioPolicyTests(unittest.TestCase):
         self.assertEqual([item["kind"] for item in request["references"]], ["image"])
         self.assertEqual(request["excluded_audio_reference_ids"], [1, 2])
         self.assertFalse(request["standalone_audio_conditioning"])
-        self.assertNotIn("<Audio 1>", request["effective_prompt"])
-        self.assertEqual(request["effective_prompt"].count("<d>[English] Hello.</d>"), 1)
-        event = request["prompt_processing"]["dialogue_events"][0]
-        self.assertEqual(event["audio_reference_id_requested"], 1)
-        self.assertIsNone(event["audio_reference_id_effective"])
-        self.assertTrue(event["audio_reference_suppressed"])
         self.assertEqual(self._staged(request)["reference_audio_filenames"], [])
 
-        compiled = translate_and_compile_prompt(
-            request["effective_prompt"],
-            dialogue_events=request["prompt_processing"]["dialogue_events"],
-            reference_inventory=_translator_reference_manifest(request["references"]),
-            mode="omni",
-        ).compiled_prompt
-        self.assertNotIn("<Audio 1>", compiled)
-        self.assertNotIn("audio reference", compiled.lower())
-        self.assertEqual(compiled.count("<d>[English] Hello.</d>"), 1)
-
-    def test_full_content_keeps_audio_conditioning_and_warning(self) -> None:
-        response = self._post(prompt=self.DIALOGUE_PROMPT, policy="full_content")
+    def test_english_dialogue_priority_also_excludes_audio(self) -> None:
+        prompt = (
+            'Cut 1\nThe woman shown in <Picture 1> says '
+            '"Hello, welcome home." exactly once.'
+        )
+        response = self._post(
+            prompt=prompt,
+            policy="dialogue_priority",
+        )
         self.assertEqual(response.status_code, 200, response.text)
         request = self._request()
+        self.assertEqual(request["effective_prompt"], prompt)
+        self.assertEqual(request["standalone_audio_policy_requested"], "dialogue_priority")
+        self.assertEqual(request["standalone_audio_policy_effective"], "dialogue_priority")
+        self.assertEqual([item["kind"] for item in request["references"]], ["image"])
+        self.assertEqual(request["excluded_audio_reference_ids"], [1])
+        self.assertFalse(request["standalone_audio_conditioning"])
+        self.assertEqual(self._staged(request)["reference_audio_filenames"], [])
+
+    def test_full_content_keeps_audio_conditioning_and_warning(self) -> None:
+        response = self._post(
+            prompt=self.AUDIO_REFERENCE_PROMPT,
+            policy="full_content",
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        request = self._request()
+        self.assertEqual(request["effective_prompt"], self.AUDIO_REFERENCE_PROMPT)
         self.assertEqual(
-            [item["kind"] for item in request["references"]], ["image", "audio"]
+            [item["kind"] for item in request["references"]],
+            ["image", "audio"],
         )
         self.assertTrue(request["standalone_audio_conditioning"])
         self.assertIn("<Audio 1>", request["effective_prompt"])
-        event = request["prompt_processing"]["dialogue_events"][0]
-        self.assertEqual(event["audio_reference_id_effective"], 1)
-        self.assertFalse(event["audio_reference_suppressed"])
         self.assertIn(
             "FULL_CONTENT_AUDIO_MAY_OVERRIDE_DIALOGUE",
             request["prompt_processing"]["diagnostics"],
@@ -176,35 +203,60 @@ class StandaloneAudioPolicyTests(unittest.TestCase):
         self.assertEqual(self.manager.submitted, [])
         self.assertEqual(set(self.manager.jobs_dir.iterdir()), before)
 
-    def test_suppression_cannot_hide_an_out_of_range_audio_reference(self) -> None:
+    def test_dialogue_priority_rejects_an_audio_tag_that_would_be_orphaned(self) -> None:
         response = self._post(
-            prompt=self.DIALOGUE_PROMPT.replace("<Audio 1>", "<Audio 2>"),
+            prompt=self.AUDIO_REFERENCE_PROMPT,
             policy="dialogue_priority",
         )
         self.assertEqual(response.status_code, 409, response.text)
         self.assertEqual(self.manager.submitted, [])
 
-    def test_formatter_cannot_hide_malformed_audio_like_tokens(self) -> None:
-        for token in ("<Audio 01>", "<Audio 0>", "<Audio x>"):
+    def test_out_of_range_and_malformed_audio_references_are_rejected(self) -> None:
+        out_of_range = self._post(
+            prompt=self.AUDIO_REFERENCE_PROMPT.replace("<Audio 1>", "<Audio 2>"),
+            policy="full_content",
+        )
+        self.assertEqual(out_of_range.status_code, 409, out_of_range.text)
+        for token in (
+            "<Audio 01>",
+            "<Audio 0>",
+            "<Audio x>",
+            "< Audio 1>",
+            "<Audio\n1>",
+        ):
             with self.subTest(token=token):
-                before = set(self.manager.jobs_dir.iterdir())
                 response = self._post(
-                    prompt=self.DIALOGUE_PROMPT.replace("<Audio 1>", token),
+                    prompt=self.AUDIO_REFERENCE_PROMPT.replace("<Audio 1>", token),
                     policy="full_content",
                 )
                 self.assertEqual(response.status_code, 400, response.text)
-                self.assertEqual(self.manager.submitted, [])
-                self.assertEqual(set(self.manager.jobs_dir.iterdir()), before)
+        self.assertEqual(self.manager.submitted, [])
 
-    def test_no_dialogue_legacy_request_preserves_full_audio_behavior(self) -> None:
-        response = self._post(
-            prompt="Cut 1\n<Picture 1> stands beside a quiet shoreline.", policy=None
-        )
+    def test_no_dialogue_request_defaults_to_full_content(self) -> None:
+        prompt = "Cut 1\n<Picture 1> stands beside a quiet shoreline."
+        response = self._post(prompt=prompt, policy=None)
         self.assertEqual(response.status_code, 200, response.text)
         request = self._request()
-        self.assertEqual(request["standalone_audio_policy_effective"], "legacy_full_content")
+        self.assertEqual(request["standalone_audio_policy_requested"], "full_content")
+        self.assertEqual(request["standalone_audio_policy_effective"], "full_content")
         self.assertTrue(request["standalone_audio_conditioning"])
         self.assertEqual(len(self._staged(request)["reference_audio_filenames"]), 1)
+
+    def test_no_dialogue_normalizes_ui_dialogue_priority_to_actual_full_content(self) -> None:
+        prompt = "Cut 1\n<Picture 1> stands beside a quiet shoreline."
+        response = self._post(prompt=prompt, policy="dialogue_priority")
+        self.assertEqual(response.status_code, 200, response.text)
+        request = self._request()
+        self.assertEqual(
+            request["standalone_audio_policy_requested"],
+            "dialogue_priority",
+        )
+        self.assertEqual(request["standalone_audio_policy_effective"], "full_content")
+        self.assertTrue(request["standalone_audio_conditioning"])
+        self.assertIn(
+            "AUDIO_POLICY_NORMALIZED_TO_FULL_CONTENT_WITHOUT_DIALOGUE",
+            request["prompt_processing"]["diagnostics"],
+        )
 
 
 if __name__ == "__main__":

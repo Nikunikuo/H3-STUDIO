@@ -60,7 +60,7 @@ const ui = {
   quickPreview: $("#quick-preview"),
   generate: $("#generate"),
   generateSummary: $("#generate-summary"),
-  translatorWarning: $("#translator-warning"),
+  plannerWarning: $("#planner-warning"),
   formError: $("#form-error"),
   queueBadge: $("#queue-badge"),
   emptyStage: $("#empty-stage"),
@@ -630,12 +630,11 @@ function restoreAudioPrompt(job) {
   const riskyAudioPolicy = [
     job?.standalone_audio_policy_requested,
     job?.standalone_audio_policy_effective,
-  ].some((value) => ["full_content", "legacy_full_content"].includes(value));
+  ].some((value) => value === "full_content");
   const riskyPromptProcessing = !["community", "raw_en"].includes(
     job?.prompt_processing_mode || "community",
   );
-  // Preserve either of the public native-clean routes. Legacy processing modes
-  // return to the community planner because they can contain old IR or <d> tags.
+  // Persisted jobs from removed modes return to the current community planner.
   const restoredPromptMode = ["community", "raw_en"].includes(job?.prompt_processing_mode)
     ? job.prompt_processing_mode
     : "community";
@@ -884,12 +883,12 @@ function updateSummary() {
   ui.weightWarningText.textContent = `基準は960×544・約5秒・Draftです。これは画素数・長さ・denoise回数だけの相対目安です。${referenceNote}`;
 }
 
-function updateTranslatorWarning() {
+function updatePlannerWarning() {
   const wantsCommunityPlanner = ui.promptProcessingMode.value === "community";
   const plannerReady = state.capabilities?.prompt_planner?.ready === true;
   const show = wantsCommunityPlanner && !plannerReady;
-  ui.translatorWarning.classList.toggle("hidden", !show);
-  ui.translatorWarning.textContent = show
+  ui.plannerWarning.classList.toggle("hidden", !show);
+  ui.plannerWarning.textContent = show
     ? "公開成功例方式に必要なローカルQwenプロンプトモデルが未準備です。Setup-H3-Studioを再実行してください。モデルをH3と同時常駐させることはありません。"
     : "";
 }
@@ -918,7 +917,7 @@ function syncPromptModeControls({ resetRawFields = false } = {}) {
   ui.promptProcessingNote.textContent = raw
     ? "英語H3プロンプトを検証後、そのままnative Comfyへ渡します。スタイル・台詞・音響は別欄から追記されないため、必要な内容をこのプロンプト1本へ書いてください。"
     : "日本語の意図を短い英語Storyboardへローカル変換し、実際の台詞だけを普通の引用符内へ原文のまま残します。独自IR・<d>・tokenizerパッチは使いません。変換後の全文は生成後の詳細で確認できます。";
-  updateTranslatorWarning();
+  updatePlannerWarning();
   updateSummary();
 }
 
@@ -991,7 +990,7 @@ function updateSystem(snapshot, capabilities) {
   ui.modelStatus.textContent = ready ? "FL2VA READY" : "MODEL MISSING";
   ui.omniLock.textContent = capabilities.ref2va ? "READY" : "Ref2VA準備中";
   ui.omniLock.classList.toggle("ready", capabilities.ref2va);
-  updateTranslatorWarning();
+  updatePlannerWarning();
   const soundControlsReady = capabilities.audio_controls?.supported === true;
   ui.soundSection.classList.toggle("pending", !soundControlsReady);
   ui.soundStatus.textContent = soundControlsReady
@@ -1070,36 +1069,20 @@ function setDetailGroup(group, content, value, preserveString = false) {
 }
 
 function compilerDetails(job) {
-  const compiler = detailObject(job.compiler);
-  const promptIr = detailObject(job.prompt_ir);
-  const compilerResult = detailObject(job.compiler_result);
+  const compiler = detailObject(job.compiler ?? job.prompt_processing);
   return {
     compiler,
-    promptIr,
-    compilerResult,
     effectivePrompt: firstDetailValue(
       job.effective_prompt,
       job.compiled_prompt,
-      typeof job.prompt_ir === "string" ? job.prompt_ir : null,
       compiler.effective_prompt,
       compiler.compiled_prompt,
-      compiler.rendered_prompt,
       compiler.prompt,
-      promptIr.effective_prompt,
-      promptIr.rendered_prompt,
-      promptIr.prompt,
-      compilerResult.effective_prompt,
-      compilerResult.rendered_prompt,
-      compilerResult.prompt,
     ),
     adjustments: firstDetailValue(
       job.auto_adjustments,
       compiler.auto_adjustments,
       compiler.adjustments,
-      promptIr.auto_adjustments,
-      promptIr.adjustments,
-      compilerResult.auto_adjustments,
-      compilerResult.adjustments,
     ),
   };
 }
@@ -1113,13 +1096,11 @@ function renderJobDetails(job) {
     return;
   }
 
-  const { compiler, promptIr, compilerResult, effectivePrompt, adjustments } = compilerDetails(job);
+  const { compiler, effectivePrompt, adjustments } = compilerDetails(job);
   const originalPrompt = firstDetailValue(job.original_prompt, job.prompt);
   const compilerDiagnostics = firstDetailValue(
     job.compiler_diagnostics,
     compiler.diagnostics,
-    promptIr.diagnostics,
-    compilerResult.diagnostics,
   );
   const referenceInfo = firstDetailValue(
     job.reference_analysis,
@@ -1127,24 +1108,21 @@ function renderJobDetails(job) {
     compiler.reference_analysis,
     compiler.reference_map,
     compiler.references,
-    promptIr.reference_analysis,
-    promptIr.reference_map,
   );
   const compilerMetadata = compactDetailObject({
     status: compiler.status,
-    context_ir: compiler.context_ir,
-    dialogue_policy: compiler.dialogue_policy,
-    dialogue_source: compiler.dialogue_source,
-    dialogue_count: compiler.dialogue_count,
-    dialogue_events: compiler.dialogue_events,
-    audio_preset_requested: compiler.audio_preset_requested,
-    audio_preset_effective: compiler.audio_preset_effective,
-    degraded: compiler.degraded,
+    processing_mode_requested: compiler.processing_mode_requested,
+    processing_mode_effective: compiler.processing_mode_effective,
+    workflow_profile: compiler.workflow_profile,
+    prompt_cache_hit: compiler.prompt_cache_hit,
+    prompt_cache_key: compiler.prompt_cache_key,
+    model_repo: compiler.model_repo,
+    model_revision: compiler.model_revision,
+    worker_elapsed_ms: compiler.worker_elapsed_ms,
     local_only: compiler.local_only,
     model_inference: compiler.model_inference,
-    mode: compiler.mode ?? promptIr.mode ?? compilerResult.mode,
-    version: compiler.version ?? promptIr.version ?? compilerResult.version,
-    schema: compiler.schema ?? promptIr.schema ?? compilerResult.schema,
+    mode: compiler.mode,
+    compiler_metadata: compiler.compiler_metadata,
     provenance: compiler.provenance,
     diagnostics: compilerDiagnostics,
   });

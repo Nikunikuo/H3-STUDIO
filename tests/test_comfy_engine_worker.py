@@ -82,7 +82,6 @@ class ComfyEngineWorkerTests(unittest.TestCase):
             "--user-directory",
             "--database-url",
             "--disable-all-custom-nodes",
-            "--whitelist-custom-nodes",
             "--disable-api-nodes",
             "--async-offload",
             "--log-stdout",
@@ -90,11 +89,7 @@ class ComfyEngineWorkerTests(unittest.TestCase):
             self.assertIn(flag, command)
         self.assertEqual(command[command.index("--listen") + 1], "127.0.0.1")
         self.assertEqual(command[command.index("--async-offload") + 1], "2")
-        self.assertEqual(
-            command[command.index("--whitelist-custom-nodes") + 1],
-            worker.COMPAT_NODE_NAME,
-        )
-        self.assertEqual(command.count(worker.COMPAT_NODE_NAME), 1)
+        self.assertNotIn("--whitelist-custom-nodes", command)
         self.assertIn("--use-sage-attention", command)
         self.assertNotIn("0.0.0.0", command)
 
@@ -102,7 +97,7 @@ class ComfyEngineWorkerTests(unittest.TestCase):
             fallback_command = worker.build_comfy_command(root, paths, 49124)
         self.assertNotIn("--use-sage-attention", fallback_command)
 
-    def test_native_clean_command_loads_no_custom_nodes(self):
+    def test_command_rejects_removed_workflow_profiles(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()
             paths = worker.make_runtime_paths(root, "native")
@@ -115,7 +110,6 @@ class ComfyEngineWorkerTests(unittest.TestCase):
 
         self.assertIn("--disable-all-custom-nodes", command)
         self.assertNotIn("--whitelist-custom-nodes", command)
-        self.assertNotIn(worker.COMPAT_NODE_NAME, command)
         with self.assertRaisesRegex(ValueError, "workflow_profile"):
             worker.build_comfy_command(
                 root,
@@ -174,78 +168,6 @@ class ComfyEngineWorkerTests(unittest.TestCase):
             self.assertEqual(report["comfyui_commit"], COMFYUI_COMMIT)
             self.assertEqual(report["model_revision"], worker.COMFY_MODEL_REVISION)
             self.assertEqual(report["variant"], "fl2va")
-
-    def test_compatibility_node_is_the_only_staged_custom_node(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary).resolve()
-            source = root / "comfy_compat" / worker.COMPAT_NODE_NAME
-            source.mkdir(parents=True)
-            source_init = source / "__init__.py"
-            source_init.write_text("NODE_CLASS_MAPPINGS = {}\n", encoding="utf-8")
-            pycache = source / "__pycache__"
-            pycache.mkdir()
-            (pycache / "ignored.pyc").write_bytes(b"ignored")
-
-            paths = worker.make_runtime_paths(root, "unit")
-            stale = paths.base / "custom_nodes" / "untrusted_node"
-            stale.mkdir(parents=True)
-            (stale / "__init__.py").write_text("raise RuntimeError\n", encoding="utf-8")
-
-            destination = worker.stage_compatibility_node(root, paths)
-            self.assertEqual(destination.name, worker.COMPAT_NODE_NAME)
-            self.assertEqual(
-                sorted(item.name for item in destination.parent.iterdir()),
-                [worker.COMPAT_NODE_NAME],
-            )
-            self.assertEqual((destination / "__init__.py").read_bytes(), source_init.read_bytes())
-            self.assertFalse((destination / "__pycache__").exists())
-
-    def test_compatibility_node_rejects_unexpected_executable_source(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary).resolve()
-            source = root / "comfy_compat" / worker.COMPAT_NODE_NAME
-            source.mkdir(parents=True)
-            (source / "__init__.py").write_text("NODE_CLASS_MAPPINGS = {}\n", encoding="utf-8")
-            (source / "unexpected.py").write_text("raise RuntimeError\n", encoding="utf-8")
-            paths = worker.make_runtime_paths(root, "unit")
-            with self.assertRaisesRegex(RuntimeError, "unexpected file"):
-                worker.stage_compatibility_node(root, paths)
-
-    def test_native_clean_neither_stages_nor_verifies_compatibility_node(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            root = Path(temporary).resolve()
-            paths = worker.make_runtime_paths(root, "native")
-            with mock.patch.object(worker, "stage_compatibility_node") as stage:
-                self.assertIsNone(worker.stage_profile_custom_nodes(root, paths, "native_clean"))
-                stage.assert_not_called()
-
-        pump = mock.Mock()
-        with mock.patch.object(worker, "require_compatibility_verification") as verify:
-            worker.verify_profile_startup(pump, "native_clean")
-            verify.assert_not_called()
-
-        with self.assertRaisesRegex(ValueError, "workflow_profile"):
-            worker.stage_profile_custom_nodes(root, paths, "unknown")
-        with self.assertRaisesRegex(ValueError, "workflow_profile"):
-            worker.verify_profile_startup(pump, "unknown")
-
-    def test_startup_requires_the_exact_tokenizer_verification_marker(self):
-        with tempfile.TemporaryDirectory() as temporary:
-            log_path = Path(temporary) / "comfy.log"
-            stream = io.StringIO(
-                "ordinary startup line\n" + worker.COMPAT_VERIFICATION_MARKER + "\n"
-            )
-            pump = worker.LogPump(stream, log_path)
-            try:
-                worker.require_compatibility_verification(pump, timeout=1.0)
-            finally:
-                pump.close()
-
-        missing = mock.Mock()
-        missing.wait_for_compatibility_verification.return_value = False
-        missing.tail.return_value = "custom node import failed"
-        with self.assertRaisesRegex(RuntimeError, "did not verify"):
-            worker.require_compatibility_verification(missing, timeout=0.0)
 
     def test_private_listener_must_belong_to_spawned_process_tree(self):
         process = mock.Mock(pid=4100)
