@@ -49,13 +49,14 @@ class ComfyEngineWorkerTests(unittest.TestCase):
         self.assertIn("below_12", short["reason"])
 
     def test_progress_tracker_parses_denoise_and_easycache_summary(self):
-        tracker = worker.ProgressTracker("balanced", 20)
+        tracker = worker.ProgressTracker("balanced", 20, "native_clean")
         event = tracker.consume(" 50%|######## | 10/20 [01:00<01:00, 6.0s/it]")
         self.assertIsNotNone(event)
         assert event is not None
         self.assertEqual(event["step"], 10)
         self.assertEqual(event["total_steps"], 20)
         self.assertEqual(event["backend"], "comfy")
+        self.assertEqual(event["workflow_profile"], "native_clean")
         self.assertIsNone(tracker.consume("100%|########| 13/13 [00:01, 10it/s]"))
 
         tracker.consume("EasyCache - skipped 7/20 steps (1.54x speedup).")
@@ -81,6 +82,7 @@ class ComfyEngineWorkerTests(unittest.TestCase):
             "--user-directory",
             "--database-url",
             "--disable-all-custom-nodes",
+            "--whitelist-custom-nodes",
             "--disable-api-nodes",
             "--async-offload",
             "--log-stdout",
@@ -88,12 +90,39 @@ class ComfyEngineWorkerTests(unittest.TestCase):
             self.assertIn(flag, command)
         self.assertEqual(command[command.index("--listen") + 1], "127.0.0.1")
         self.assertEqual(command[command.index("--async-offload") + 1], "2")
+        self.assertEqual(
+            command[command.index("--whitelist-custom-nodes") + 1],
+            worker.COMPAT_NODE_NAME,
+        )
+        self.assertEqual(command.count(worker.COMPAT_NODE_NAME), 1)
         self.assertIn("--use-sage-attention", command)
         self.assertNotIn("0.0.0.0", command)
 
         with mock.patch.dict(os.environ, {"H3_ATTENTION_BACKEND": "pytorch"}):
             fallback_command = worker.build_comfy_command(root, paths, 49124)
         self.assertNotIn("--use-sage-attention", fallback_command)
+
+    def test_native_clean_command_loads_no_custom_nodes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            paths = worker.make_runtime_paths(root, "native")
+            command = worker.build_comfy_command(
+                root,
+                paths,
+                49125,
+                workflow_profile_name="native_clean",
+            )
+
+        self.assertIn("--disable-all-custom-nodes", command)
+        self.assertNotIn("--whitelist-custom-nodes", command)
+        self.assertNotIn(worker.COMPAT_NODE_NAME, command)
+        with self.assertRaisesRegex(ValueError, "workflow_profile"):
+            worker.build_comfy_command(
+                root,
+                paths,
+                49126,
+                workflow_profile_name="untrusted",
+            )
 
     def test_verify_installation_checks_fixed_sha_size_and_download_marker(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -145,6 +174,78 @@ class ComfyEngineWorkerTests(unittest.TestCase):
             self.assertEqual(report["comfyui_commit"], COMFYUI_COMMIT)
             self.assertEqual(report["model_revision"], worker.COMFY_MODEL_REVISION)
             self.assertEqual(report["variant"], "fl2va")
+
+    def test_compatibility_node_is_the_only_staged_custom_node(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            source = root / "comfy_compat" / worker.COMPAT_NODE_NAME
+            source.mkdir(parents=True)
+            source_init = source / "__init__.py"
+            source_init.write_text("NODE_CLASS_MAPPINGS = {}\n", encoding="utf-8")
+            pycache = source / "__pycache__"
+            pycache.mkdir()
+            (pycache / "ignored.pyc").write_bytes(b"ignored")
+
+            paths = worker.make_runtime_paths(root, "unit")
+            stale = paths.base / "custom_nodes" / "untrusted_node"
+            stale.mkdir(parents=True)
+            (stale / "__init__.py").write_text("raise RuntimeError\n", encoding="utf-8")
+
+            destination = worker.stage_compatibility_node(root, paths)
+            self.assertEqual(destination.name, worker.COMPAT_NODE_NAME)
+            self.assertEqual(
+                sorted(item.name for item in destination.parent.iterdir()),
+                [worker.COMPAT_NODE_NAME],
+            )
+            self.assertEqual((destination / "__init__.py").read_bytes(), source_init.read_bytes())
+            self.assertFalse((destination / "__pycache__").exists())
+
+    def test_compatibility_node_rejects_unexpected_executable_source(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            source = root / "comfy_compat" / worker.COMPAT_NODE_NAME
+            source.mkdir(parents=True)
+            (source / "__init__.py").write_text("NODE_CLASS_MAPPINGS = {}\n", encoding="utf-8")
+            (source / "unexpected.py").write_text("raise RuntimeError\n", encoding="utf-8")
+            paths = worker.make_runtime_paths(root, "unit")
+            with self.assertRaisesRegex(RuntimeError, "unexpected file"):
+                worker.stage_compatibility_node(root, paths)
+
+    def test_native_clean_neither_stages_nor_verifies_compatibility_node(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            paths = worker.make_runtime_paths(root, "native")
+            with mock.patch.object(worker, "stage_compatibility_node") as stage:
+                self.assertIsNone(worker.stage_profile_custom_nodes(root, paths, "native_clean"))
+                stage.assert_not_called()
+
+        pump = mock.Mock()
+        with mock.patch.object(worker, "require_compatibility_verification") as verify:
+            worker.verify_profile_startup(pump, "native_clean")
+            verify.assert_not_called()
+
+        with self.assertRaisesRegex(ValueError, "workflow_profile"):
+            worker.stage_profile_custom_nodes(root, paths, "unknown")
+        with self.assertRaisesRegex(ValueError, "workflow_profile"):
+            worker.verify_profile_startup(pump, "unknown")
+
+    def test_startup_requires_the_exact_tokenizer_verification_marker(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            log_path = Path(temporary) / "comfy.log"
+            stream = io.StringIO(
+                "ordinary startup line\n" + worker.COMPAT_VERIFICATION_MARKER + "\n"
+            )
+            pump = worker.LogPump(stream, log_path)
+            try:
+                worker.require_compatibility_verification(pump, timeout=1.0)
+            finally:
+                pump.close()
+
+        missing = mock.Mock()
+        missing.wait_for_compatibility_verification.return_value = False
+        missing.tail.return_value = "custom node import failed"
+        with self.assertRaisesRegex(RuntimeError, "did not verify"):
+            worker.require_compatibility_verification(missing, timeout=0.0)
 
     def test_private_listener_must_belong_to_spawned_process_tree(self):
         process = mock.Mock(pid=4100)
@@ -224,6 +325,24 @@ class ComfyEngineWorkerTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "escapes"):
                 worker.stage_request_inputs(request, paths, root)
 
+    def test_stage_inputs_fail_closed_if_suppressed_audio_reaches_worker(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            source = root / "webui_data" / "jobs" / "unit" / "inputs" / "voice.wav"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(b"audio")
+            paths = worker.make_runtime_paths(root, "unit")
+            request = {
+                "id": "unit",
+                "standalone_audio_conditioning": False,
+                "references": [{"kind": "audio", "stored_path": os.fspath(source)}],
+            }
+
+            with self.assertRaisesRegex(ValueError, "conditioning was disabled"):
+                worker.stage_request_inputs(request, paths, root)
+
+            self.assertEqual(list(paths.input.iterdir()), [])
+
     def test_find_video_descriptor_prefers_save_video_node(self):
         history = {
             "outputs": {
@@ -240,7 +359,10 @@ class ComfyEngineWorkerTests(unittest.TestCase):
             "input_filename": None,
             "last_frame_filename": None,
             "reference_image_filenames": ["job/00_image.png"],
-            "reference_video_filenames": [],
+            "reference_video_filenames": [
+                "job/01_video.mp4",
+                "job/02_video.mp4",
+            ],
             "reference_audio_filenames": [],
         }
         request = {
@@ -253,12 +375,23 @@ class ComfyEngineWorkerTests(unittest.TestCase):
             "seed": 42,
             "audio_gain_db": -2,
             "ref_image_size": "max",
+            "embedded_video_audio_policy": "reference",
+            "embedded_video_audio_indices": [1],
         }
-        workflow = worker.build_request_workflow(
-            request,
-            staged,
-            requested_acceleration="balanced",
-            output_prefix="h3/unit",
+        with mock.patch.object(
+            worker,
+            "build_h3_workflow",
+            wraps=worker.build_h3_workflow,
+        ) as build_workflow:
+            workflow = worker.build_request_workflow(
+                request,
+                staged,
+                requested_acceleration="balanced",
+                output_prefix="h3/unit",
+            )
+        self.assertEqual(
+            build_workflow.call_args.kwargs["embedded_video_audio_indices"],
+            [1],
         )
         conditioning = workflow["prompt"]["9"]["inputs"]
         save_video = workflow["prompt"][worker.SAVE_VIDEO_NODE_ID]["inputs"]
@@ -266,6 +399,87 @@ class ComfyEngineWorkerTests(unittest.TestCase):
         self.assertEqual(save_video["format"], "auto")
         self.assertEqual(save_video["codec"], "auto")
         self.assertEqual(workflow["metadata"]["requested_easycache"], "balanced")
+        self.assertEqual(workflow["metadata"]["requested_scheduler"], "auto")
+        self.assertEqual(workflow["metadata"]["effective_scheduler"], "simple")
+        self.assertEqual(workflow["metadata"]["embedded_video_audio_indices"], [1])
+        self.assertEqual(workflow["prompt"]["8"]["inputs"]["scheduler"], "simple")
+        self.assertNotIn(
+            "ref_video_audios.ref_video_audio_0",
+            conditioning,
+        )
+        self.assertEqual(
+            conditioning["ref_video_audios.ref_video_audio_1"],
+            ["203", 1],
+        )
+
+    def test_native_clean_forwards_prompt_byte_for_byte_with_public_baseline(self):
+        prompt = (
+            "Scene overview: a quiet room.  \r\n"
+            "Audio: room tone only.\n"
+            'Dialogue: She says, "日本語の台詞。"\n\n'
+        )
+        staged = {
+            "input_filename": None,
+            "last_frame_filename": None,
+            "reference_image_filenames": [],
+            "reference_video_filenames": [],
+            "reference_audio_filenames": [],
+        }
+        request = {
+            "mode": "t2v",
+            "workflow_profile": "native_clean",
+            "effective_prompt": prompt,
+            "width": 864,
+            "height": 480,
+            "num_frames": 124,
+            "steps": 20,
+            "seed": 7,
+        }
+
+        workflow = worker.build_request_workflow(
+            request,
+            staged,
+            requested_acceleration=worker._requested_acceleration(request),
+            output_prefix="h3/native-clean",
+        )
+        conditioning = workflow["prompt"]["9"]["inputs"]
+
+        self.assertEqual(conditioning["prompt"].encode("utf-8"), prompt.encode("utf-8"))
+        self.assertEqual(conditioning["width"], 864)
+        self.assertEqual(conditioning["height"], 480)
+        self.assertEqual(conditioning["length"], 124)
+        self.assertEqual(workflow["prompt"]["8"]["inputs"]["steps"], 20)
+        self.assertEqual(workflow["prompt"]["8"]["inputs"]["scheduler"], "simple")
+        self.assertEqual(workflow["prompt"]["7"]["inputs"]["sampler_name"], "res_multistep")
+        self.assertEqual(workflow["metadata"]["workflow_profile"], "native_clean")
+        self.assertEqual(workflow["metadata"]["effective_easycache"], "off")
+        self.assertNotIn("2", workflow["prompt"])
+
+    def test_effective_prompt_must_already_be_a_string(self):
+        request = {
+            "mode": "t2v",
+            "workflow_profile": "native_clean",
+            "effective_prompt": ["must", "not", "coerce"],
+            "width": 864,
+            "height": 480,
+            "num_frames": 124,
+            "steps": 20,
+            "seed": 7,
+        }
+        staged = {
+            "input_filename": None,
+            "last_frame_filename": None,
+            "reference_image_filenames": [],
+            "reference_video_filenames": [],
+            "reference_audio_filenames": [],
+        }
+        with self.assertRaisesRegex(TypeError, "effective_prompt"):
+            worker.build_request_workflow(
+                request,
+                staged,
+                requested_acceleration="off",
+                output_prefix="h3/reject",
+            )
 
     def test_terminate_process_tree_terminates_children_before_parent(self):
         process = mock.Mock(pid=1234)
@@ -304,6 +518,19 @@ class ComfyEngineWorkerTests(unittest.TestCase):
         self.assertEqual(payload["status"], "failed")
         self.assertEqual(payload["message"], "original startup error")
         self.assertEqual(payload["attention_backend"], "not-a-backend")
+
+    def test_failure_result_records_native_clean_profile(self):
+        output = io.StringIO()
+        request = {
+            "mode": "t2v",
+            "steps": 20,
+            "workflow_profile": "native_clean",
+        }
+        with mock.patch.object(worker.traceback, "print_exc"), redirect_stdout(output):
+            worker._emit_failure(RuntimeError("baseline failed"), request)
+        payload = json.loads(output.getvalue()[len(worker.EVENT_PREFIX) :])
+        self.assertEqual(payload["workflow_profile"], "native_clean")
+        self.assertEqual(payload["scheduler"]["effective"], "simple")
 
     def test_load_request_rejects_path_outside_root(self):
         with tempfile.TemporaryDirectory() as project, tempfile.TemporaryDirectory() as outside:

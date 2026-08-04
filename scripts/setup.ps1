@@ -35,7 +35,7 @@ if ($LASTEXITCODE -ne 0) {
 if ($LASTEXITCODE -ne 0) {
     throw "Web UI dependency installation failed."
 }
-& $VenvPython -c "import fastapi, multipart, psutil, uvicorn; print('webui python', __import__('sys').version.split()[0]); print('fastapi', fastapi.__version__); print('uvicorn', uvicorn.__version__)"
+& $VenvPython -c "import av, fastapi, multipart, psutil, uvicorn; print('webui python', __import__('sys').version.split()[0]); print('av', av.__version__); print('fastapi', fastapi.__version__); print('uvicorn', uvicorn.__version__)"
 if ($LASTEXITCODE -ne 0) {
     throw "Web UI runtime validation failed."
 }

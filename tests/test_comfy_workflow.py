@@ -77,6 +77,8 @@ class ComfyWorkflowTests(unittest.TestCase):
         self.assertNotIn("last_frame", graph[CONDITIONING_NODE_ID]["inputs"])
         self.assertEqual(graph["7"]["inputs"]["sampler_name"], "res_multistep")
         self.assertEqual(graph[SCHEDULER_NODE_ID]["inputs"]["scheduler"], "simple")
+        self.assertEqual(workflow["metadata"]["requested_scheduler"], "auto")
+        self.assertEqual(workflow["metadata"]["effective_scheduler"], "simple")
         self.assertEqual(graph[SCHEDULER_NODE_ID]["inputs"]["steps"], 20)
         self.assertEqual(graph["6"]["inputs"]["noise_seed"], 123456)
         self.assertEqual(graph["11"]["inputs"]["latent_image"], [CONDITIONING_NODE_ID, 1])
@@ -127,12 +129,16 @@ class ComfyWorkflowTests(unittest.TestCase):
             reference_video_filenames=["v1.mp4", "v2.mov"],
             reference_audio_filenames=["a1.wav", "a2.flac"],
             ref_image_size="match",
+            embedded_video_audio_policy="reference",
         )
         graph = workflow["prompt"]
         conditioning = graph[CONDITIONING_NODE_ID]
         inputs = conditioning["inputs"]
         self.assert_json_serializable(workflow)
         self.assertEqual(graph[UNET_NODE_ID]["inputs"]["unet_name"], REF2VA_MODEL)
+        self.assertEqual(graph[SCHEDULER_NODE_ID]["inputs"]["scheduler"], "simple")
+        self.assertEqual(workflow["metadata"]["requested_scheduler"], "auto")
+        self.assertEqual(workflow["metadata"]["effective_scheduler"], "simple")
         self.assertEqual(conditioning["class_type"], "MiniMaxH3ReferenceToVideo")
         self.assertEqual(
             [key for key in inputs if key.startswith("ref_images.")],
@@ -180,6 +186,41 @@ class ComfyWorkflowTests(unittest.TestCase):
         self.assertEqual(graph[EASYCACHE_NODE_ID]["inputs"]["start_percent"], 0.20)
         self.assertEqual(graph[EASYCACHE_NODE_ID]["inputs"]["end_percent"], 0.90)
 
+    def test_community_cache_matches_published_example_and_is_opt_in(self):
+        baseline = build(
+            "t2v",
+            workflow_profile="native_clean",
+            width=864,
+            height=480,
+            frames=124,
+            steps=20,
+        )
+        self.assertEqual(baseline["metadata"]["workflow_profile"], "native_clean")
+        self.assertEqual(baseline["metadata"]["effective_easycache"], "off")
+        self.assertNotIn(EASYCACHE_NODE_ID, baseline["prompt"])
+
+        community = build(
+            "t2v",
+            workflow_profile="native_clean",
+            easycache="community",
+            width=864,
+            height=480,
+            frames=124,
+            steps=20,
+        )
+        cache = community["prompt"][EASYCACHE_NODE_ID]["inputs"]
+        self.assertEqual(cache["reuse_threshold"], 0.20)
+        self.assertEqual(cache["start_percent"], 0.15)
+        self.assertEqual(cache["end_percent"], 0.95)
+        self.assertEqual(community["metadata"]["requested_easycache"], "community")
+        self.assertEqual(community["metadata"]["effective_easycache"], "community")
+
+    def test_workflow_profile_is_validated_and_default_preserves_compatibility(self):
+        defaulted = build("t2v")
+        self.assertEqual(defaulted["metadata"]["workflow_profile"], "studio_compat")
+        with self.assertRaisesRegex(ValueError, "workflow profile"):
+            build("t2v", workflow_profile="unknown")
+
     def test_cache_is_forced_off_below_twelve_steps(self):
         workflow = build("t2v", easycache="balanced", steps=11)
         graph = workflow["prompt"]
@@ -188,6 +229,15 @@ class ComfyWorkflowTests(unittest.TestCase):
         self.assertEqual(graph[GUIDER_NODE_ID]["inputs"]["model"], [UNET_NODE_ID, 0])
         self.assertEqual(workflow["metadata"]["requested_easycache"], "balanced")
         self.assertEqual(workflow["metadata"]["effective_easycache"], "off")
+
+    def test_draft_ref2va_uses_simple_scheduler_to_finish_denoising(self):
+        workflow = build("omni", steps=8)
+        self.assertEqual(workflow["metadata"]["requested_scheduler"], "auto")
+        self.assertEqual(workflow["metadata"]["effective_scheduler"], "simple")
+        self.assertEqual(
+            workflow["prompt"][SCHEDULER_NODE_ID]["inputs"]["scheduler"],
+            "simple",
+        )
 
     def test_reference_limits_and_required_frames_are_enforced(self):
         with self.assertRaisesRegex(ValueError, "at most 9"):
@@ -200,6 +250,66 @@ class ComfyWorkflowTests(unittest.TestCase):
             build("i2v")
         with self.assertRaisesRegex(ValueError, "requires last_frame_filename"):
             build("first_last", input_filename="first.png")
+
+    def test_internal_scheduler_override_is_validated_and_audited(self):
+        workflow = build("omni", scheduler="simple")
+        self.assertEqual(workflow["prompt"][SCHEDULER_NODE_ID]["inputs"]["scheduler"], "simple")
+        self.assertEqual(workflow["metadata"]["requested_scheduler"], "simple")
+        self.assertEqual(workflow["metadata"]["effective_scheduler"], "simple")
+        with self.assertRaisesRegex(ValueError, "unsupported scheduler"):
+            build("omni", scheduler="karras")
+
+    def test_reference_video_soundtrack_is_opt_in_and_audited(self):
+        defaulted = build(
+            "omni",
+            reference_video_filenames=["motion.mp4"],
+        )
+        ignored = build(
+            "omni",
+            reference_video_filenames=["motion.mp4"],
+            embedded_video_audio_policy="ignore",
+        )
+        retained = build(
+            "omni",
+            reference_video_filenames=["motion.mp4"],
+            embedded_video_audio_policy="reference",
+        )
+
+        defaulted_inputs = defaulted["prompt"][CONDITIONING_NODE_ID]["inputs"]
+        ignored_inputs = ignored["prompt"][CONDITIONING_NODE_ID]["inputs"]
+        retained_inputs = retained["prompt"][CONDITIONING_NODE_ID]["inputs"]
+        self.assertNotIn("ref_video_audios.ref_video_audio_0", defaulted_inputs)
+        self.assertNotIn("ref_video_audios.ref_video_audio_0", ignored_inputs)
+        self.assertEqual(
+            retained_inputs["ref_video_audios.ref_video_audio_0"],
+            ["201", 1],
+        )
+        self.assertEqual(defaulted["metadata"]["embedded_video_audio_policy"], "ignore")
+        self.assertEqual(ignored["metadata"]["embedded_video_audio_policy"], "ignore")
+        self.assertEqual(retained["metadata"]["embedded_video_audio_policy"], "reference")
+        with self.assertRaisesRegex(ValueError, "embedded video audio policy"):
+            build("omni", embedded_video_audio_policy="auto")
+
+    def test_only_selected_reference_video_soundtrack_is_connected_and_audited(self):
+        workflow = build(
+            "omni",
+            reference_video_filenames=["silent-motion.mp4", "voice-motion.mp4"],
+            embedded_video_audio_policy="reference",
+            embedded_video_audio_indices=[1],
+        )
+
+        inputs = workflow["prompt"][CONDITIONING_NODE_ID]["inputs"]
+        self.assertEqual(inputs["ref_videos.ref_video_0"], ["201", 0])
+        self.assertEqual(inputs["ref_videos.ref_video_1"], ["203", 0])
+        self.assertNotIn("ref_video_audios.ref_video_audio_0", inputs)
+        self.assertEqual(
+            inputs["ref_video_audios.ref_video_audio_1"],
+            ["203", 1],
+        )
+        self.assertEqual(
+            workflow["metadata"]["embedded_video_audio_indices"],
+            [1],
+        )
 
 
 if __name__ == "__main__":

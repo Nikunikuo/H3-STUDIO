@@ -43,8 +43,19 @@ FIRST_FRAME_NODE_ID = "20"
 LAST_FRAME_NODE_ID = "21"
 
 SUPPORTED_MODES = frozenset({"t2v", "i2v", "first_last", "omni"})
+DEFAULT_WORKFLOW_PROFILE = "studio_compat"
+SUPPORTED_WORKFLOW_PROFILES = frozenset({DEFAULT_WORKFLOW_PROFILE, "native_clean"})
+SUPPORTED_SCHEDULERS = frozenset({"auto", "normal", "simple"})
+EMBEDDED_VIDEO_AUDIO_POLICIES = frozenset({"ignore", "reference", "reuse"})
+DEFAULT_SCHEDULER_BY_VARIANT = {
+    "fl2va": "simple",
+    "ref2va": "simple",
+}
 EASYCACHE_PRESETS: dict[str, tuple[float, float, float] | None] = {
     "off": None,
+    # Values used by the reproducible public MiniMax H3 ComfyUI example.  It
+    # remains opt-in: a clean comparison baseline requests ``off``.
+    "community": (0.20, 0.15, 0.95),
     "conservative": (0.20, 0.20, 0.90),
     "balanced": (0.30, 0.20, 0.90),
 }
@@ -76,6 +87,28 @@ def _file_list(value: Sequence[str] | None, *, name: str, maximum: int) -> list[
     return files
 
 
+def resolve_scheduler(
+    mode: str,
+    requested: str = "auto",
+    *,
+    steps: int | None = None,
+) -> str:
+    """Resolve the hidden scheduler policy without adding another UI control."""
+
+    if mode not in SUPPORTED_MODES:
+        choices = ", ".join(sorted(SUPPORTED_MODES))
+        raise ValueError(f"unsupported mode {mode!r}; expected one of: {choices}")
+    if not isinstance(requested, str) or requested not in SUPPORTED_SCHEDULERS:
+        choices = ", ".join(sorted(SUPPORTED_SCHEDULERS))
+        raise ValueError(f"unsupported scheduler {requested!r}; expected one of: {choices}")
+    if steps is not None and (not isinstance(steps, int) or steps < 1):
+        raise ValueError("steps must be a positive integer when resolving scheduler")
+    if requested != "auto":
+        return requested
+    variant = "ref2va" if mode == "omni" else "fl2va"
+    return DEFAULT_SCHEDULER_BY_VARIANT[variant]
+
+
 def _validate_parameters(
     *,
     mode: str,
@@ -86,7 +119,10 @@ def _validate_parameters(
     steps: int,
     seed: int,
     output_prefix: str,
+    workflow_profile: str,
     easycache: str,
+    scheduler: str,
+    embedded_video_audio_policy: str,
     audio_gain_db: float,
     input_filename: str | None,
     last_frame_filename: str | None,
@@ -109,9 +145,21 @@ def _validate_parameters(
         raise ValueError("seed must be an unsigned 64-bit integer")
     if not isinstance(output_prefix, str) or not output_prefix.strip():
         raise ValueError("output_prefix must be a non-empty string")
+    if workflow_profile not in SUPPORTED_WORKFLOW_PROFILES:
+        choices = ", ".join(sorted(SUPPORTED_WORKFLOW_PROFILES))
+        raise ValueError(
+            f"unsupported workflow profile {workflow_profile!r}; expected one of: {choices}"
+        )
     if easycache not in EASYCACHE_PRESETS:
         choices = ", ".join(EASYCACHE_PRESETS)
         raise ValueError(f"unsupported EasyCache preset {easycache!r}; expected one of: {choices}")
+    resolve_scheduler(mode, scheduler, steps=steps)
+    if embedded_video_audio_policy not in EMBEDDED_VIDEO_AUDIO_POLICIES:
+        choices = ", ".join(sorted(EMBEDDED_VIDEO_AUDIO_POLICIES))
+        raise ValueError(
+            "unsupported embedded video audio policy "
+            f"{embedded_video_audio_policy!r}; expected one of: {choices}"
+        )
     if (
         not isinstance(audio_gain_db, (int, float))
         or isinstance(audio_gain_db, bool)
@@ -143,6 +191,7 @@ def _add_shared_nodes(
     output_prefix: str,
     audio_gain_db: float,
     effective_easycache: str,
+    scheduler: str,
 ) -> list[str | int]:
     graph[UNET_NODE_ID] = _node(
         "UNETLoader",
@@ -177,7 +226,7 @@ def _add_shared_nodes(
     graph[SCHEDULER_NODE_ID] = _node(
         "BasicScheduler",
         model=model_edge,
-        scheduler="simple",
+        scheduler=scheduler,
         steps=steps,
         denoise=1.0,
     )
@@ -272,6 +321,8 @@ def _add_omni_conditioning(
     reference_videos: list[str],
     reference_audios: list[str],
     ref_image_size: str,
+    embedded_video_audio_policy: str,
+    embedded_video_audio_indices: frozenset[int],
 ) -> None:
     inputs: dict[str, Any] = {
         "clip": _edge(CLIP_NODE_ID),
@@ -298,7 +349,11 @@ def _add_omni_conditioning(
         graph[load_id] = _node("LoadVideo", file=filename)
         graph[components_id] = _node("GetVideoComponents", video=_edge(load_id))
         inputs[f"ref_videos.ref_video_{index}"] = _edge(components_id, 0)
-        inputs[f"ref_video_audios.ref_video_audio_{index}"] = _edge(components_id, 1)
+        if (
+            embedded_video_audio_policy != "ignore"
+            and index in embedded_video_audio_indices
+        ):
+            inputs[f"ref_video_audios.ref_video_audio_{index}"] = _edge(components_id, 1)
 
     for index, filename in enumerate(reference_audios):
         node_id = str(300 + index)
@@ -325,7 +380,11 @@ def build_h3_workflow(
     reference_video_filenames: Sequence[str] | None = None,
     reference_audio_filenames: Sequence[str] | None = None,
     ref_image_size: str = "match",
+    workflow_profile: str = DEFAULT_WORKFLOW_PROFILE,
     easycache: str = "off",
+    scheduler: str = "auto",
+    embedded_video_audio_policy: str = "ignore",
+    embedded_video_audio_indices: Sequence[int] | None = None,
 ) -> WorkflowEnvelope:
     """Return a JSON-serializable MiniMax H3 ComfyUI workflow envelope.
 
@@ -336,7 +395,11 @@ def build_h3_workflow(
 
     EasyCache is intentionally disabled below 12 sampling steps: its warm-up
     and non-cache tail leave too few useful steps for a meaningful win there.
-    The metadata records both the requested and effective preset.
+    Scheduler ``auto`` keeps both FL2VA and Ref2VA on the ``simple`` schedule
+    used by the published ComfyUI workflow templates.  This also avoids the
+    visibly under-denoised Draft output observed with Ref2VA ``normal``.
+    Metadata records requested and effective values for both hidden policy
+    decisions.
     """
 
     _validate_parameters(
@@ -348,7 +411,10 @@ def build_h3_workflow(
         steps=steps,
         seed=seed,
         output_prefix=output_prefix,
+        workflow_profile=workflow_profile,
         easycache=easycache,
+        scheduler=scheduler,
+        embedded_video_audio_policy=embedded_video_audio_policy,
         audio_gain_db=audio_gain_db,
         input_filename=input_filename,
         last_frame_filename=last_frame_filename,
@@ -369,8 +435,28 @@ def build_h3_workflow(
         name="reference_audio_filenames",
         maximum=3,
     )
+    if embedded_video_audio_indices is None:
+        enabled_video_audio_indices = (
+            frozenset(range(len(reference_videos)))
+            if embedded_video_audio_policy != "ignore"
+            else frozenset()
+        )
+    else:
+        if isinstance(embedded_video_audio_indices, (str, bytes)):
+            raise ValueError("embedded_video_audio_indices must be a sequence of integers")
+        values = tuple(embedded_video_audio_indices)
+        if any(isinstance(item, bool) or not isinstance(item, int) for item in values):
+            raise ValueError("embedded_video_audio_indices must contain only integers")
+        if len(set(values)) != len(values):
+            raise ValueError("embedded_video_audio_indices must not contain duplicates")
+        if any(item < 0 or item >= len(reference_videos) for item in values):
+            raise ValueError("embedded_video_audio_indices contains an unavailable video index")
+        enabled_video_audio_indices = frozenset(values)
+    if embedded_video_audio_policy == "ignore" and enabled_video_audio_indices:
+        raise ValueError("ignore policy cannot enable embedded video audio indices")
 
     effective_easycache = easycache if steps >= MIN_EASYCACHE_STEPS else "off"
+    effective_scheduler = resolve_scheduler(mode, scheduler, steps=steps)
     graph: PromptGraph = {}
     model_filename = REF2VA_MODEL if mode == "omni" else FL2VA_MODEL
     _add_shared_nodes(
@@ -381,6 +467,7 @@ def build_h3_workflow(
         output_prefix=output_prefix,
         audio_gain_db=audio_gain_db,
         effective_easycache=effective_easycache,
+        scheduler=effective_scheduler,
     )
 
     if mode == "omni":
@@ -394,6 +481,8 @@ def build_h3_workflow(
             reference_videos=reference_videos,
             reference_audios=reference_audios,
             ref_image_size=ref_image_size,
+            embedded_video_audio_policy=embedded_video_audio_policy,
+            embedded_video_audio_indices=enabled_video_audio_indices,
         )
     else:
         _add_fl2va_conditioning(
@@ -412,8 +501,13 @@ def build_h3_workflow(
         "metadata": {
             "comfyui_commit": COMFYUI_COMMIT,
             "mode": mode,
+            "workflow_profile": workflow_profile,
             "requested_easycache": easycache,
             "effective_easycache": effective_easycache,
+            "requested_scheduler": scheduler,
+            "effective_scheduler": effective_scheduler,
+            "embedded_video_audio_policy": embedded_video_audio_policy,
+            "embedded_video_audio_indices": sorted(enabled_video_audio_indices),
             "audio_gain_db": int(audio_gain_db),
             "save_video_node_id": SAVE_VIDEO_NODE_ID,
         },

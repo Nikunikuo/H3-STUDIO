@@ -24,9 +24,9 @@ if (-not (Test-Path -LiteralPath $ComfySetup)) {
 }
 
 # This is intentionally a fast verification: fixed source revisions, the
-# isolated runtime, CUDA availability, and exact byte sizes for all five model
-# files. Full SHA-256 validation of 59 GiB is available through setup_comfy.ps1
-# but would make every normal launch unnecessarily slow.
+# isolated runtime, CUDA availability, and exact byte sizes for the H3 and Qwen
+# planner files. Full SHA-256 validation and the Qwen full-weight load probe are
+# available through setup_comfy.ps1 but would make every normal launch slow.
 & $ComfySetup -VerifyOnly -SkipModelHash
 if ($LASTEXITCODE -ne 0) {
     throw "ComfyUI verification failed. Rerun Setup-H3-Studio.cmd to repair or resume the local setup."

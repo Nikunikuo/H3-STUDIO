@@ -1,6 +1,6 @@
 # Third-Party Notices / サードパーティ通知
 
-最終確認: 2026-08-04
+最終確認: 2026-08-05
 
 H3-STUDIO本体のMIT Licenseは、セットアップ時に取得される上流ソフトウェア、Python package、モデル、重みを再ライセンスするものではありません。それぞれの著作権表示とライセンスが維持されます。モデル固有の条件は [`MODEL_TERMS.md`](./MODEL_TERMS.md) を参照してください。
 
@@ -13,6 +13,8 @@ This project's MIT License does not replace the licenses of downloaded third-par
 - **SageAttention** — upstream License: Apache License 2.0. [Official source and license](https://github.com/thu-ml/SageAttention/blob/main/LICENSE) Windowsではupstream公式binaryではなく、第三者`woct0rdho`による固定wheel `2.2.0+cu130torch2.10.0andhigher.post6`を取得します。[Third-party Windows wheel release](https://github.com/woct0rdho/SageAttention/releases/tag/v2.2.0-windows.post6) セットアップは16,656,067 bytesおよびSHA-256 `1635283f5c01ec3cda58a784d0d7eabbcaffaf9511d1b263db4750e1ed7958bb`を検証します。
 - **triton-windows** — version `3.7.1.post27`。License: MIT. [Official project and license](https://github.com/woct0rdho/triton-windows/blob/main/LICENSE)
 - **Hugging Face Diffusers** — optional legacy comparison routeのみ。固定commit `abc5e9bf71fd38f53cd471bc3acaa84bc5ecbfdc`。License: Apache License 2.0. [Pinned source and license](https://github.com/huggingface/diffusers/blob/abc5e9bf71fd38f53cd471bc3acaa84bc5ecbfdc/LICENSE)
+- **Qwen3-4B-Instruct-2507** — 既定のcommunity prompt plannerです。日本語自然文を公開ローカル成功例型の英語制御ブロックへ意味展開する別processで使用し、公式Full-Reference Rewrite Guideは意味・参照・時系列のguardrailとして参照します。公式6-section rewrite形式と`<d>`タグ自体は出力せず、完了後はH3／ComfyUI起動前にprocessを終了します。セットアップは固定revision `cdbee75f17c01a7cc42f958dc650907174af0554`から許可リスト9ファイル（8,056,459,158 bytes）だけを取得し、サイズとSHA-256を検証します。重みはGitへ含めません。License: Apache License 2.0。[Pinned model card](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507/blob/cdbee75f17c01a7cc42f958dc650907174af0554/README.md) / [Pinned license](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507/blob/cdbee75f17c01a7cc42f958dc650907174af0554/LICENSE)
+- **LiquidAI LFM2-350M-ENJP-MT** — 旧`official_en`経路とのA/B比較にだけ使う任意のローカル翻訳モデルです。導入を選んだ場合だけ、固定revision `80367784d525777ad7565b24534ba5810eeac59f`の許可リスト8ファイルを取得し、サイズとSHA-256を検証します。重みはGitへ含めません。導入しなくても、必須のQwen community plannerと英語advanced pass-throughを利用できます。License: LFM Open License v1.0。年間売上1,000万米ドルを基準とする商用利用制限、再配布時のライセンス・変更・帰属・`NOTICE`保持条件があります。[Pinned model card](https://huggingface.co/LiquidAI/LFM2-350M-ENJP-MT/blob/80367784d525777ad7565b24534ba5810eeac59f/README.md) / [Pinned license](https://huggingface.co/LiquidAI/LFM2-350M-ENJP-MT/blob/80367784d525777ad7565b24534ba5810eeac59f/LICENSE)
 - **Qwen3-VL** — MiniMax H3のtext encoderはQwen3-VL-32B系です。MiniMax公式ライセンスはこのencoderをApache License 2.0として明記しています。Qwen側のライセンスとモデルカードも確認してください。[Qwen3-VL license](https://github.com/QwenLM/Qwen3-VL/blob/main/LICENSE) / [Qwen3-VL-32B-Instruct model card](https://huggingface.co/Qwen/Qwen3-VL-32B-Instruct)
 - **PyTorch / torchvision / torchaudio** — セットアップ時に公式wheelを取得します。PyTorch本体はBSD-style licenseで、各projectの同梱noticeも適用されます。[PyTorch license](https://github.com/pytorch/pytorch/blob/main/LICENSE)
 

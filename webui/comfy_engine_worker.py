@@ -23,6 +23,7 @@ from .comfy_client import ComfyClient, ComfyClientError, PromptPoll
 from .comfy_workflow import (
     AUDIO_VAE_MODEL,
     COMFYUI_COMMIT,
+    DEFAULT_WORKFLOW_PROFILE,
     EASYCACHE_PRESETS,
     FL2VA_MODEL,
     MIN_EASYCACHE_STEPS,
@@ -30,7 +31,9 @@ from .comfy_workflow import (
     SAVE_VIDEO_NODE_ID,
     TEXT_ENCODER_MODEL,
     VIDEO_VAE_MODEL,
+    SUPPORTED_WORKFLOW_PROFILES,
     build_h3_workflow,
+    resolve_scheduler,
 )
 from .process_guard import ProcessJob
 
@@ -45,6 +48,9 @@ PROMPT_TIMEOUT_SECONDS = 12 * 60 * 60.0
 POLL_INTERVAL_SECONDS = 1.0
 MAX_REFERENCE_BYTES = 2 * 1024**3
 ATTENTION_BACKENDS = {"sage", "pytorch"}
+COMPAT_NODE_NAME = "h3_studio_compat"
+COMPAT_VERIFICATION_MARKER = "H3_STUDIO_COMPAT tokenizer_patch=verified ids=151669-151675"
+COMPAT_VERIFICATION_TIMEOUT_SECONDS = 5.0
 
 _MEDIA_EXTENSIONS = {
     "image": {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".tif", ".tiff", ".webp"},
@@ -142,6 +148,27 @@ def _requested_acceleration(request: Mapping[str, Any]) -> str:
         choices = ", ".join(EASYCACHE_PRESETS)
         raise ValueError(f"acceleration must be one of: {choices}")
     return requested
+
+
+def workflow_profile(request: Mapping[str, Any]) -> str:
+    requested = request.get("workflow_profile", DEFAULT_WORKFLOW_PROFILE)
+    if not isinstance(requested, str) or requested not in SUPPORTED_WORKFLOW_PROFILES:
+        choices = ", ".join(sorted(SUPPORTED_WORKFLOW_PROFILES))
+        raise ValueError(f"workflow_profile must be one of: {choices}")
+    return requested
+
+
+def scheduler_schema(request: Mapping[str, Any]) -> dict[str, str]:
+    requested = request.get("scheduler", "auto")
+    if not isinstance(requested, str):
+        raise ValueError("scheduler must be a string")
+    mode = str(request.get("mode"))
+    raw_steps = request.get("steps")
+    steps = int(raw_steps) if raw_steps is not None else None
+    return {
+        "requested": requested,
+        "effective": resolve_scheduler(mode, requested, steps=steps),
+    }
 
 
 def cache_schema(
@@ -305,6 +332,72 @@ def make_runtime_paths(root: Path, job_token: str) -> RuntimePaths:
     return paths
 
 
+def stage_compatibility_node(root: Path, paths: RuntimePaths) -> Path:
+    """Stage only the repository-owned H3 shim into the isolated Comfy base."""
+
+    project_root = root.resolve()
+    source = (project_root / "comfy_compat" / COMPAT_NODE_NAME).resolve(strict=True)
+    if not _is_within(project_root, source):
+        raise ValueError(f"compatibility node escapes the project root: {source}")
+    if not source.is_dir() or source.is_symlink():
+        raise RuntimeError(f"H3 compatibility node must be a real directory: {source}")
+    init_file = source / "__init__.py"
+    if not init_file.is_file() or init_file.is_symlink():
+        raise RuntimeError(f"H3 compatibility node is incomplete: {init_file}")
+
+    # The package intentionally has one executable file.  Reject unexpected
+    # staged code instead of allowing a future/untracked helper to inherit the
+    # custom-node whitelist implicitly.
+    for candidate in source.rglob("*"):
+        relative = candidate.relative_to(source)
+        if "__pycache__" in relative.parts or candidate.suffix == ".pyc":
+            continue
+        if candidate.is_symlink():
+            raise RuntimeError(f"H3 compatibility node contains a symlink: {relative}")
+        if candidate.is_file() and relative != Path("__init__.py"):
+            raise RuntimeError(f"H3 compatibility node contains an unexpected file: {relative}")
+
+    runtime_root = paths.root.resolve(strict=True)
+    expected_runtime_parent = (project_root / "webui_data" / "comfy_runtime").resolve()
+    if not _is_within(expected_runtime_parent, runtime_root):
+        raise ValueError(f"Comfy runtime escapes the project runtime root: {runtime_root}")
+    base = paths.base.resolve(strict=True)
+    if not _is_within(runtime_root, base):
+        raise ValueError(f"Comfy base escapes its isolated runtime: {base}")
+
+    custom_nodes = paths.base / "custom_nodes"
+    if custom_nodes.exists() or custom_nodes.is_symlink():
+        resolved_custom_nodes = custom_nodes.resolve(strict=False)
+        if not _is_within(base, resolved_custom_nodes):
+            raise ValueError(f"custom_nodes escapes the isolated Comfy base: {resolved_custom_nodes}")
+        if custom_nodes.is_symlink():
+            custom_nodes.unlink()
+        else:
+            shutil.rmtree(custom_nodes)
+    destination = custom_nodes / COMPAT_NODE_NAME
+    destination.mkdir(parents=True, exist_ok=False)
+    staged_init = destination / "__init__.py"
+    shutil.copy2(init_file, staged_init)
+    if staged_init.read_bytes() != init_file.read_bytes():
+        raise RuntimeError("staged H3 compatibility node does not match its repository source")
+    return destination
+
+
+def stage_profile_custom_nodes(
+    root: Path,
+    paths: RuntimePaths,
+    workflow_profile_name: str,
+) -> Path | None:
+    """Prepare only the custom code explicitly allowed by the profile."""
+
+    if workflow_profile_name == "native_clean":
+        return None
+    if workflow_profile_name == DEFAULT_WORKFLOW_PROFILE:
+        return stage_compatibility_node(root, paths)
+    choices = ", ".join(sorted(SUPPORTED_WORKFLOW_PROFILES))
+    raise ValueError(f"workflow_profile must be one of: {choices}")
+
+
 def reserve_loopback_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as listener:
         listener.bind(("127.0.0.1", 0))
@@ -345,7 +438,16 @@ def configured_attention_backend() -> str:
     return backend
 
 
-def build_comfy_command(root: Path, paths: RuntimePaths, port: int) -> list[str]:
+def build_comfy_command(
+    root: Path,
+    paths: RuntimePaths,
+    port: int,
+    *,
+    workflow_profile_name: str = DEFAULT_WORKFLOW_PROFILE,
+) -> list[str]:
+    if workflow_profile_name not in SUPPORTED_WORKFLOW_PROFILES:
+        choices = ", ".join(sorted(SUPPORTED_WORKFLOW_PROFILES))
+        raise ValueError(f"workflow_profile must be one of: {choices}")
     database_url = "sqlite:///" + paths.database.as_posix()
     command = [
         os.fspath(root / ".comfy-venv" / "Scripts" / "python.exe"),
@@ -378,6 +480,12 @@ def build_comfy_command(root: Path, paths: RuntimePaths, port: int) -> list[str]
         "2048",
         "--log-stdout",
     ]
+    if workflow_profile_name == DEFAULT_WORKFLOW_PROFILE:
+        disable_index = command.index("--disable-all-custom-nodes")
+        command[disable_index + 1:disable_index + 1] = [
+            "--whitelist-custom-nodes",
+            COMPAT_NODE_NAME,
+        ]
     if configured_attention_backend() == "sage":
         command.append("--use-sage-attention")
     return command
@@ -391,6 +499,7 @@ class LogPump:
         self._log_path = log_path
         self._lines: queue.SimpleQueue[str] = queue.SimpleQueue()
         self._tail: list[str] = []
+        self._compatibility_verified = threading.Event()
         self._thread = threading.Thread(target=self._read, name="comfy-stdout-drain", daemon=True)
         self._thread.start()
 
@@ -402,6 +511,8 @@ class LogPump:
         handle.flush()
         self._tail.append(line)
         del self._tail[:-80]
+        if COMPAT_VERIFICATION_MARKER in line:
+            self._compatibility_verified.set()
         self._lines.put(line)
 
     def _read(self) -> None:
@@ -438,12 +549,39 @@ class LogPump:
     def tail(self) -> str:
         return "\n".join(self._tail[-20:])
 
+    def wait_for_compatibility_verification(self, timeout: float) -> bool:
+        return self._compatibility_verified.wait(timeout)
+
     def close(self) -> None:
         try:
             self._stream.close()
         except (OSError, ValueError):
             pass
         self._thread.join(timeout=3)
+
+
+def require_compatibility_verification(
+    pump: LogPump, timeout: float = COMPAT_VERIFICATION_TIMEOUT_SECONDS
+) -> None:
+    """Fail closed unless the isolated H3 tokenizer probe completed."""
+
+    if not pump.wait_for_compatibility_verification(timeout):
+        raise RuntimeError(
+            "H3 tokenizer compatibility node did not verify the required token IDs "
+            "during ComfyUI startup\n" + pump.tail()
+        )
+
+
+def verify_profile_startup(pump: LogPump, workflow_profile_name: str) -> None:
+    """Run profile-specific startup probes without probing native ComfyUI."""
+
+    if workflow_profile_name == "native_clean":
+        return
+    if workflow_profile_name == DEFAULT_WORKFLOW_PROFILE:
+        require_compatibility_verification(pump)
+        return
+    choices = ", ".join(sorted(SUPPORTED_WORKFLOW_PROFILES))
+    raise ValueError(f"workflow_profile must be one of: {choices}")
 
 
 def terminate_process_tree(process: subprocess.Popen[str] | None) -> None:
@@ -472,9 +610,15 @@ def terminate_process_tree(process: subprocess.Popen[str] | None) -> None:
 
 
 class ProgressTracker:
-    def __init__(self, requested: str, steps: int) -> None:
+    def __init__(
+        self,
+        requested: str,
+        steps: int,
+        workflow_profile_name: str = DEFAULT_WORKFLOW_PROFILE,
+    ) -> None:
         self.requested = requested
         self.steps = steps
+        self.workflow_profile = workflow_profile_name
         self.cache = cache_schema(requested, steps)
         self.progress = 18.0
         self.last_step: int | None = None
@@ -505,6 +649,7 @@ class ProgressTracker:
             "step": step,
             "total_steps": self.steps,
             "backend": "comfy",
+            "workflow_profile": self.workflow_profile,
             "acceleration": self.requested,
             "cache": dict(self.cache),
         }
@@ -558,6 +703,16 @@ def _stage_one(source_value: Any, kind: str, stage_dir: Path, index: int, root: 
 def stage_request_inputs(
     request: Mapping[str, Any], paths: RuntimePaths, root: Path
 ) -> tuple[dict[str, Any], Path]:
+    references = request.get("references", [])
+    if not isinstance(references, list):
+        raise ValueError("references must be a list")
+    if request.get("standalone_audio_conditioning") is False and any(
+        isinstance(reference, Mapping) and reference.get("kind") == "audio"
+        for reference in references
+    ):
+        raise ValueError(
+            "standalone Audio remained in the execution request after conditioning was disabled"
+        )
     stage_dir = paths.input / ("h3_" + _safe_job_token(request.get("id")) + "_" + uuid.uuid4().hex[:8])
     stage_dir.mkdir(parents=True, exist_ok=False)
     staged: dict[str, Any] = {
@@ -574,7 +729,7 @@ def stage_request_inputs(
     if request.get("last_image"):
         staged["last_frame_filename"] = _stage_one(request["last_image"], "image", stage_dir, index, root)
         index += 1
-    for reference in request.get("references", []):
+    for reference in references:
         if not isinstance(reference, Mapping):
             raise ValueError("each reference must be an object")
         kind = reference.get("kind")
@@ -595,9 +750,15 @@ def build_request_workflow(
 ) -> dict[str, Any]:
     """Translate one persisted UI request into the pinned workflow builder."""
 
+    effective_prompt = request["effective_prompt"]
+    if not isinstance(effective_prompt, str):
+        raise TypeError("effective_prompt must be a string")
     return build_h3_workflow(
         mode=str(request["mode"]),
-        prompt=str(request["effective_prompt"]),
+        # Do not strip, normalize, translate, tag, or otherwise rewrite this
+        # value.  In native_clean it is the already-compiled prompt and must
+        # reach MiniMaxH3*ToVideo byte-for-byte.
+        prompt=effective_prompt,
         width=int(request["width"]),
         height=int(request["height"]),
         frames=int(request["num_frames"]),
@@ -606,7 +767,13 @@ def build_request_workflow(
         output_prefix=output_prefix,
         audio_gain_db=float(request.get("audio_gain_db", 0.0)),
         ref_image_size=str(request.get("ref_image_size", "match")),
+        workflow_profile=workflow_profile(request),
         easycache=requested_acceleration,
+        scheduler=str(request.get("scheduler", "auto")),
+        embedded_video_audio_policy=str(
+            request.get("embedded_video_audio_policy", "ignore")
+        ),
+        embedded_video_audio_indices=request.get("embedded_video_audio_indices"),
         **dict(staged),
     )
 
@@ -723,9 +890,11 @@ def run(request: dict[str, Any], *, root: Path = ROOT) -> None:
     mode = str(request.get("mode"))
     variant = "ref2va" if mode == "omni" else "fl2va"
     requested = _requested_acceleration(request)
+    profile = workflow_profile(request)
+    scheduler = scheduler_schema(request)
     attention_backend = configured_attention_backend()
     steps = int(request["steps"])
-    tracker = ProgressTracker(requested, steps)
+    tracker = ProgressTracker(requested, steps, profile)
     job_token = _safe_job_token(request.get("id"))
     paths = make_runtime_paths(root, job_token)
     job_log = Path(str(request["request_path"])).resolve().parent / "comfy.log"
@@ -735,22 +904,33 @@ def run(request: dict[str, Any], *, root: Path = ROOT) -> None:
     stage_dir: Path | None = None
     timings: dict[str, Any] = {}
     try:
+        job_log.parent.mkdir(parents=True, exist_ok=True)
+        with job_log.open("a", encoding="utf-8", errors="replace") as handle:
+            handle.write(f"H3 Studio workflow_profile={profile}\n")
         emit(
             status="running",
             phase="ComfyUIを検証しています",
             message="固定版ComfyUIとモデルファイルを検証しています。",
             progress=2,
             backend="comfy",
+            workflow_profile=profile,
             attention_backend=attention_backend,
             acceleration=requested,
+            scheduler=dict(scheduler),
             cache=dict(tracker.cache),
         )
         checkpoint = time.monotonic()
         markers = verify_installation(root, variant)
         timings["verification_seconds"] = round(time.monotonic() - checkpoint, 3)
 
+        compat_node_path = stage_profile_custom_nodes(root, paths, profile)
         port = reserve_loopback_port()
-        command = build_comfy_command(root, paths, port)
+        command = build_comfy_command(
+            root,
+            paths,
+            port,
+            workflow_profile_name=profile,
+        )
         environment = os.environ.copy()
         environment.update(PYTHONIOENCODING="utf-8", PYTHONUNBUFFERED="1", NO_PROXY="127.0.0.1,localhost")
         environment.pop("PYTHONPATH", None)
@@ -799,6 +979,7 @@ def run(request: dict[str, Any], *, root: Path = ROOT) -> None:
                 if time.monotonic() >= deadline:
                     raise TimeoutError(f"ComfyUI did not become healthy\n{pump.tail()}")
                 time.sleep(0.25)
+        verify_profile_startup(pump, profile)
         verify_loopback_listener_owner(process, port)
         client.timeout = 30.0
         timings["startup_seconds"] = round(time.monotonic() - checkpoint, 3)
@@ -808,8 +989,10 @@ def run(request: dict[str, Any], *, root: Path = ROOT) -> None:
             message="参照素材をComfyUIの隔離入力へ準備しています。",
             progress=12,
             backend="comfy",
+            workflow_profile=profile,
             attention_backend=attention_backend,
             acceleration=requested,
+            scheduler=dict(scheduler),
             cache=dict(tracker.cache),
         )
 
@@ -823,6 +1006,21 @@ def run(request: dict[str, Any], *, root: Path = ROOT) -> None:
             requested_acceleration=requested,
             output_prefix=output_prefix,
         )
+        workflow_scheduler = {
+            "requested": str(workflow["metadata"]["requested_scheduler"]),
+            "effective": str(workflow["metadata"]["effective_scheduler"]),
+        }
+        if workflow_scheduler != scheduler:
+            raise RuntimeError(
+                f"scheduler resolution changed while building the workflow: "
+                f"expected {scheduler}, got {workflow_scheduler}"
+            )
+        scheduler = workflow_scheduler
+        if workflow["metadata"].get("workflow_profile") != profile:
+            raise RuntimeError(
+                "workflow profile changed while building the workflow: "
+                f"expected {profile}, got {workflow['metadata'].get('workflow_profile')}"
+            )
         node_info = client.object_info()
         required_nodes = {node["class_type"] for node in workflow["prompt"].values()}
         missing_nodes = sorted(required_nodes.difference(node_info))
@@ -845,8 +1043,10 @@ def run(request: dict[str, Any], *, root: Path = ROOT) -> None:
             message="固定H3 workflowを実行しています。",
             progress=18,
             backend="comfy",
+            workflow_profile=profile,
             attention_backend=attention_backend,
             acceleration=requested,
+            scheduler=dict(scheduler),
             cache=dict(tracker.cache),
         )
         deadline = submitted_at + float(request.get("timeout_seconds", PROMPT_TIMEOUT_SECONDS))
@@ -886,8 +1086,10 @@ def run(request: dict[str, Any], *, root: Path = ROOT) -> None:
                     step=tracker.last_step,
                     total_steps=steps,
                     backend="comfy",
+                    workflow_profile=profile,
                     attention_backend=attention_backend,
                     acceleration=requested,
+                    scheduler=dict(scheduler),
                     cache=dict(tracker.cache),
                 )
             time.sleep(POLL_INTERVAL_SECONDS)
@@ -905,8 +1107,10 @@ def run(request: dict[str, Any], *, root: Path = ROOT) -> None:
             message="動画と音声を全デコードし、プレビューを作成しています。",
             progress=96,
             backend="comfy",
+            workflow_profile=profile,
             attention_backend=attention_backend,
             acceleration=requested,
+            scheduler=dict(scheduler),
             cache=dict(tracker.cache),
         )
         checkpoint = time.monotonic()
@@ -921,8 +1125,10 @@ def run(request: dict[str, Any], *, root: Path = ROOT) -> None:
             result=request.get("result_url"),
             preview=request.get("preview_url"),
             backend="comfy",
+            workflow_profile=profile,
             attention_backend=attention_backend,
             acceleration=requested,
+            scheduler=dict(scheduler),
             cache=dict(tracker.cache),
             timings=timings,
             media=media,
@@ -932,6 +1138,15 @@ def run(request: dict[str, Any], *, root: Path = ROOT) -> None:
                 "comfy_pid": process.pid,
                 "async_offload_streams": 2,
                 "attention_backend": attention_backend,
+                "workflow_profile": profile,
+                "compatibility_node": (
+                    os.fspath(compat_node_path) if compat_node_path is not None else None
+                ),
+                "h3_token_ids": (
+                    list(range(151669, 151676))
+                    if profile == DEFAULT_WORKFLOW_PROFILE
+                    else []
+                ),
             },
         )
     finally:
@@ -950,11 +1165,21 @@ def run(request: dict[str, Any], *, root: Path = ROOT) -> None:
 
 def _emit_failure(exc: Exception, request: Mapping[str, Any] | None = None) -> None:
     requested = "off"
+    profile = DEFAULT_WORKFLOW_PROFILE
     steps = 0
+    scheduler: dict[str, str] | None = None
     if request is not None:
         try:
             requested = _requested_acceleration(request)
             steps = int(request.get("steps", 0))
+        except (TypeError, ValueError):
+            pass
+        try:
+            profile = workflow_profile(request)
+        except (TypeError, ValueError):
+            profile = str(request.get("workflow_profile", "invalid"))
+        try:
+            scheduler = scheduler_schema(request)
         except (TypeError, ValueError):
             pass
     cache = cache_schema(requested, steps) if requested in EASYCACHE_PRESETS and steps >= 0 else None
@@ -970,8 +1195,10 @@ def _emit_failure(exc: Exception, request: Mapping[str, Any] | None = None) -> N
         message=str(exc) or exc.__class__.__name__,
         progress=0,
         backend="comfy",
+        workflow_profile=profile,
         attention_backend=attention_backend,
         acceleration=requested,
+        scheduler=scheduler,
         cache=cache,
     )
     traceback.print_exc()

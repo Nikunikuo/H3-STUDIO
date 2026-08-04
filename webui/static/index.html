@@ -119,7 +119,15 @@
               </small>
             </label>
             <div class="reference-list" id="reference-list"></div>
-            <p class="reference-helper">公式タグをクリックするとプロンプトへ挿入します。番号は画像・動画・音声ごとに付き、並べ替えると自動更新されます。音声付き動画は内部でAudio番号も持ちます。</p>
+            <p class="reference-helper">公式タグをクリックするとプロンプトへ挿入します。番号は画像・動画・音声ごとに付き、並べ替えると自動更新されます。参照動画の埋め込み音声は通常経路では使用しません。</p>
+            <label class="field reference-audio-policy hidden" id="reference-audio-policy-field">
+              <span>standalone Audioの使い方</span>
+              <select id="standalone-audio-policy" aria-describedby="standalone-audio-policy-note">
+                <option value="dialogue_priority" selected>指定台詞を優先 · 推奨</option>
+                <option value="full_content">元音声も使う · 実験的</option>
+              </select>
+              <small id="standalone-audio-policy-note">明示台詞がある生成では、添付音声をH3の生成条件から外します。声色は参照されません。</small>
+            </label>
           </div>
         </div>
 
@@ -137,13 +145,15 @@
         </div>
 
         <div class="form-section prompt-section">
-          <div class="section-label"><span id="prompt-step">03</span> プロンプト</div>
+          <div class="section-label" id="prompt-label"><span id="prompt-step">03</span> プロンプト</div>
           <div class="prompt-shell">
             <textarea
               id="prompt"
               maxlength="4000"
-              rows="6"
-              placeholder="映像で起きること、画角、動き、光、聞こえてほしい音を自然な文章で書いてください。"
+              rows="9"
+              aria-labelledby="prompt-label"
+              aria-describedby="prompt-help"
+              placeholder="Cut4&#10;キャラクターはカメラを見て、低くくぐもった声で「はぁ、あっつい。」と一度だけ言う。&#10;穏やかな波の音が続き、グラスを置くと小さくカランと鳴る。BGMなし。"
             ></textarea>
             <div class="prompt-footer">
               <button class="sample-button" id="sample-prompt" type="button">例文を入れる</button>
@@ -156,63 +166,69 @@
             </select>
             <button id="reuse-prompt" type="button" disabled>プロンプトを再利用</button>
           </div>
-          <p class="helper">音も同時生成されます。「雨音」「足音」「遠くの環境音」なども文章に含めると効果的です。</p>
+          <p class="helper" id="prompt-help">映像、カメラ、動作、声質、台詞、環境音、効果音をCutごとにまとめて書けます。台詞は「実際に話す言葉」と分かるように鉤括弧で囲み、「と言う」「と話す」まで書いてください。H3 Studioが発話制御だけを公式形式へ整え、動作や効果音は同じCutに残します。順序を強く効かせたい大きな動作・台詞・音は、同じCut内で改行して分けると安定します。</p>
         </div>
 
-        <div class="form-section sound-section" id="sound-section">
-          <div class="section-label"><span id="sound-step">04</span> 音声・音響</div>
-          <div class="sound-fact">
+        <details class="form-section sound-section audio-advanced" id="sound-section">
+          <summary>
             <span class="sound-wave" aria-hidden="true">⌁</span>
-            <p><strong>映像と32 kHzステレオ音声を同時生成</strong><small id="sound-status">会話・環境音・効果音・BGMの指示を、公式推奨の音響プロンプト形式へ自動でまとめます。</small></p>
+            <span class="audio-summary-copy"><strong>音声の詳細設定（任意）</strong><small>通常はプロンプトだけでOK · 台詞の固定、全体音響、BGM、出力音量</small></span>
+          </summary>
+          <div class="audio-advanced-body">
+            <div class="sound-fact">
+              <span class="sound-wave" aria-hidden="true">⌁</span>
+              <p><strong>映像と32 kHzステレオ音声を同時生成</strong><small id="sound-status">日本語台詞は原文のまま1回だけ保持し、映像・カメラ・音響の制御文とは分離します。</small></p>
+            </div>
+            <div class="sound-grid">
+              <label class="field">
+                <span>音の主役</span>
+                <select id="sound-preset" disabled>
+                  <option value="auto" selected>自動 · 映像に合わせる</option>
+                  <option value="dialogue">会話・声を優先</option>
+                  <option value="ambience">環境音・空気感を優先</option>
+                  <option value="effects">効果音・フォーリーを優先</option>
+                  <option value="music">音楽を優先</option>
+                  <option value="quiet">静かな音場</option>
+                </select>
+              </label>
+              <label class="field">
+                <span>BGM</span>
+                <select id="music-policy" disabled>
+                  <option value="auto" selected>自動</option>
+                  <option value="none">BGMなし</option>
+                  <option value="subtle">控えめなBGM</option>
+                  <option value="prominent">はっきりしたBGM</option>
+                </select>
+              </label>
+              <label class="field sound-text-field">
+                <span>台詞を固定する（任意・本文より優先） <b><i id="dialogue-count">0</i> / 800</b></span>
+                <textarea id="dialogue" maxlength="800" rows="3" aria-describedby="dialogue-help" placeholder="例：Cut4&#10;（低くくぐもった女性の声）&#10;「はぁ、あっつい。」" disabled></textarea>
+                <small id="dialogue-help">空欄ならメインプロンプト中の台詞を使います。入力した場合だけ、指定したCutの台詞を上書きします。</small>
+              </label>
+              <label class="field sound-text-field">
+                <span>全体の音響補足（任意） <b><i id="soundscape-count">0</i> / 800</b></span>
+                <textarea id="soundscape" maxlength="800" rows="3" placeholder="例：全編を通して遠い波音を小さく保つ。Cutごとの音はメインプロンプトへ書いてください。" disabled></textarea>
+              </label>
+              <label class="field sound-output-field">
+                <span>最終出力音量</span>
+                <select id="audio-gain" disabled>
+                  <option value="-12">かなり小さく · −12 dB</option>
+                  <option value="-6">小さめ · −6 dB</option>
+                  <option value="0" selected>そのまま · 0 dB</option>
+                  <option value="3">少し大きく · +3 dB</option>
+                  <option value="6">大きく · +6 dB</option>
+                </select>
+                <small>MP4書き出し直前に波形へ適用する確定処理です。音の内容には影響しません。</small>
+              </label>
+            </div>
+            <p class="helper">Cut内の台詞・声質・環境音・効果音が正本です。ここは全体傾向の調整や、台詞を明示的に固定したい場合だけ使用します。</p>
           </div>
-          <div class="sound-grid">
-            <label class="field">
-              <span>音の主役</span>
-              <select id="sound-preset" disabled>
-                <option value="auto" selected>自動 · 映像に合わせる</option>
-                <option value="dialogue">会話・声を優先</option>
-                <option value="ambience">環境音・空気感を優先</option>
-                <option value="effects">効果音・フォーリーを優先</option>
-                <option value="music">音楽を優先</option>
-                <option value="quiet">静かな音場</option>
-              </select>
-            </label>
-            <label class="field">
-              <span>BGM</span>
-              <select id="music-policy" disabled>
-                <option value="auto" selected>自動</option>
-                <option value="none">BGMなし</option>
-                <option value="subtle">控えめなBGM</option>
-                <option value="prominent">はっきりしたBGM</option>
-              </select>
-            </label>
-            <label class="field sound-text-field">
-              <span>台詞・声質 <b><i id="dialogue-count">0</i> / 800</b></span>
-              <textarea id="dialogue" maxlength="800" rows="3" placeholder="例：少女が明るい高い声で「おはよう！」。口の動きと自然に同期。" disabled></textarea>
-            </label>
-            <label class="field sound-text-field">
-              <span>環境音・効果音 <b><i id="soundscape-count">0</i> / 800</b></span>
-              <textarea id="soundscape" maxlength="800" rows="3" placeholder="例：小雨、濡れた足音、遠くの車。カット4で鋭い衝撃音。" disabled></textarea>
-            </label>
-            <label class="field sound-output-field">
-              <span>最終出力音量</span>
-              <select id="audio-gain" disabled>
-                <option value="-12">かなり小さく · −12 dB</option>
-                <option value="-6">小さめ · −6 dB</option>
-                <option value="0" selected>そのまま · 0 dB</option>
-                <option value="3">少し大きく · +3 dB</option>
-                <option value="6">大きく · +6 dB</option>
-              </select>
-              <small>MP4書き出し直前に波形へ適用する確定処理です。音の内容には影響しません。</small>
-            </label>
-          </div>
-          <p class="helper">これはH3へ渡す自然言語の音響指示です。音量や声の強さを数値で固定する機能ではありません。Omniでは音声参照も追加できます。</p>
-        </div>
+        </details>
 
         <div class="form-section">
-          <div class="section-label"><span id="settings-step">05</span> かんたん設定</div>
+          <div class="section-label"><span id="settings-step">04</span> かんたん設定</div>
           <div class="settings-grid">
-            <label class="field">
+            <label class="field generation-quality-field">
               <span>画質</span>
               <select id="quality">
                 <option value="8">Draft · 7回</option>
@@ -220,18 +236,26 @@
                 <option value="30">High · 29回</option>
               </select>
             </label>
-            <label class="field">
-              <span>解像度</span>
-              <select id="resolution">
-                <option value="320x192">Quick · 320×192</option>
-                <option value="640x384" selected>Preview · 640×384</option>
-                <option value="960x544">Fast · 960×544（native比 約2.3×/step）</option>
-                <option value="1344x768">Landscape · 1344×768</option>
-                <option value="768x1344">Portrait · 768×1344</option>
-                <option value="768x768">Square · 768×768</option>
+            <label class="field aspect-ratio-field">
+              <span>縦横比</span>
+              <select id="aspect-ratio">
+                <option value="16:9" selected>横 16:9</option>
+                <option value="9:16">縦 9:16</option>
+                <option value="1:1">正方形 1:1</option>
+                <option value="4:3">横 4:3</option>
+                <option value="3:4">縦 3:4</option>
               </select>
             </label>
-            <label class="field">
+            <label class="field resolution-quality-field">
+              <span>解像度</span>
+              <select id="resolution-quality">
+                <option value="preview">Preview · 672×384</option>
+                <option value="sd" selected>SD 480p相当 · 864×480</option>
+                <option value="hd">HD 720p相当 · 1312×736</option>
+                <option value="native">Native 768p · 1344×768</option>
+              </select>
+            </label>
+            <label class="field duration-field">
               <span>長さ</span>
               <select id="duration">
                 <option value="124" selected>約5秒</option>
@@ -250,11 +274,22 @@
               <span>高速化</span>
               <select id="acceleration" aria-describedby="acceleration-note">
                 <option value="off" selected>品質優先 · OFF</option>
+                <option value="community">公開例 · EasyCache 0.20</option>
                 <option value="conservative">保守的 · EasyCache 0.20</option>
                 <option value="balanced">高速 · EasyCache 0.30</option>
               </select>
               <small id="acceleration-note">
-                EasyCacheは前ステップの計算を再利用する近似処理です。20 step前後で効果が出やすく、Draft（steps&lt;12）では自動OFF。映像と音声がわずかに変わる可能性があります。
+                公開例はthreshold 0.20・sampling 15%～95%。EasyCacheは近似処理なので、Draft（steps&lt;12）では自動OFF。映像と音声がわずかに変わる可能性があります。
+              </small>
+            </label>
+            <label class="field prompt-processing-field">
+              <span>プロンプト処理</span>
+              <select id="prompt-processing-mode" aria-describedby="prompt-processing-note">
+                <option value="community" selected>日本語入力 · 公開成功例方式（推奨）</option>
+                <option value="raw_en">英語H3プロンプトをそのまま · 上級</option>
+              </select>
+              <small id="prompt-processing-note">
+                推奨設定は、日本語の意図を短い英語Storyboardへローカル変換し、実際の台詞だけを普通の引用符内へ原文のまま残します。独自IR・&lt;d&gt;・tokenizerパッチは使いません。変換後の全文は生成後の詳細で確認できます。
               </small>
             </label>
           </div>
@@ -273,10 +308,11 @@
             <span class="generate-orb">✦</span>
             <span>
               <strong>動画を生成</strong>
-              <small id="generate-summary">640×384 · 約5秒 · Standard</small>
+              <small id="generate-summary">16:9 · SD · 864×480 · 約5秒 · Standard</small>
             </span>
             <span class="button-arrow">→</span>
           </button>
+          <p id="translator-warning" class="translator-warning hidden" role="status"></p>
           <p id="form-error" class="form-error" role="alert"></p>
         </div>
       </section>
@@ -346,6 +382,56 @@
             <pre class="log-view hidden" id="log-view"></pre>
           </div>
         </div>
+
+        <section class="job-details hidden" id="job-details" aria-label="生成の詳細">
+          <details id="job-details-disclosure">
+            <summary>
+              <span>生成の詳細を見る</span>
+              <small id="job-details-caption">実際に使われた設定を確認できます</small>
+            </summary>
+            <div class="job-details-grid">
+              <details class="job-detail-group job-detail-original hidden" id="detail-original-group">
+                <summary>
+                  <span>入力した原文</span>
+                  <small>変換前のプロンプト</small>
+                </summary>
+                <pre class="job-detail-content" id="detail-original"></pre>
+              </details>
+
+              <details class="job-detail-group job-detail-effective hidden" id="detail-effective-group">
+                <summary>
+                  <span>実効プロンプト</span>
+                  <small>モデルへ渡した最終プロンプト</small>
+                </summary>
+                <pre class="job-detail-content" id="detail-effective"></pre>
+              </details>
+
+              <details class="job-detail-group hidden" id="detail-adjustments-group">
+                <summary>
+                  <span>自動調整</span>
+                  <small>H3 Studioが生成前に整えた内容</small>
+                </summary>
+                <pre class="job-detail-content" id="detail-adjustments"></pre>
+              </details>
+
+              <details class="job-detail-group hidden" id="detail-reference-group">
+                <summary>
+                  <span>参考情報</span>
+                  <small>参照素材と入力ガードの補足</small>
+                </summary>
+                <pre class="job-detail-content" id="detail-reference"></pre>
+              </details>
+
+              <details class="job-detail-group hidden" id="detail-technical-group">
+                <summary>
+                  <span>技術情報</span>
+                  <small>実行環境・処理時間・出力検証</small>
+                </summary>
+                <pre class="job-detail-content" id="detail-technical"></pre>
+              </details>
+            </div>
+          </details>
+        </section>
 
         <div class="history-section">
           <div class="history-heading">

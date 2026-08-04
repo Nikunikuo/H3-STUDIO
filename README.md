@@ -3,7 +3,20 @@
 MiniMax H3をWindowsのローカルWeb UIから使う、動画＋同期音声生成スタジオです。Text、Image、開始／終了Frames、複数参照を扱うOmniに対応し、固定revisionのComfyUIバックエンドをH3 Studio自身が起動・停止します。普段の生成でPowerShellコマンドやComfyUIノードを操作する必要はありません。
 
 > [!IMPORTANT]
-> モデル重みはこのGitリポジトリに含まれません。初回セットアップが`Comfy-Org/MiniMax-H3`の固定revisionから必要な5ファイルだけ（約59.08GiB）を取得し、サイズとSHA-256を検証します。MiniMax H3 Community Licenseには適用地域、用途、出力、再配布、商用利用に関する制限があります。セットアップ前に[モデル利用条件](./MODEL_TERMS.md)と[公式ライセンス原文](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/af0fe5abe6fd50d632b65a82fef321c4c5c1f249/LICENSE)を必ず確認してください。
+> モデル重みはこのGitリポジトリに含まれません。初回セットアップが`Comfy-Org/MiniMax-H3`の固定revisionから必要な5ファイル（約59.08GiB）と、community prompt planner用`Qwen/Qwen3-4B-Instruct-2507`の実行最小9ファイル（約7.50GiB）を取得し、サイズとSHA-256を検証します。MiniMax H3 Community Licenseには適用地域、用途、出力、再配布、商用利用に関する制限があります。セットアップ前に[モデル利用条件](./MODEL_TERMS.md)と[公式ライセンス原文](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/af0fe5abe6fd50d632b65a82fef321c4c5c1f249/LICENSE)を必ず確認してください。
+
+### このリポジトリに入っているもの／入っていないもの
+
+| 対象 | GitHubに同梱 | 初回セットアップ | ローカル保存先 |
+|---|---|---|---|
+| H3 StudioのWeb UI、生成処理、セットアップスクリプト、テスト | あり | clone時に取得 | リポジトリ内 |
+| モデルの固定revision、期待サイズ、SHA-256を記録したlock | あり | clone時に取得 | `comfy_models.lock.json`、`prompt_planner.lock.json` |
+| MiniMax H3の量子化済み重み5ファイル（約59.08GiB） | **なし** | 公式`Comfy-Org/MiniMax-H3`から自動取得 | `models/comfy/` |
+| 日本語prompt整理用Qwen3-4Bの重み9ファイル（約7.50GiB） | **なし** | 公式`Qwen/Qwen3-4B-Instruct-2507`から自動取得 | `models/prompt_planner/Qwen3-4B-Instruct-2507/` |
+| ComfyUI、Python仮想環境、CUDA依存、SageAttention | **なし** | 固定revision／固定versionを自動構築 | `.upstream/`、`.comfy-venv/`など |
+| 参照素材、生成動画、prompt履歴 | **なし** | 利用中にこのPCだけへ保存 | `webui_data/`、`outputs/webui/` |
+
+現在使うHugging Face上のH3／Qwen配布元は公開リポジトリなので、Hugging Faceアカウント、ログイン、アクセストークンは不要です。取得対象はlockで固定し、完了後にbyte数とSHA-256を検証します。途中で通信が切れた場合も、`Setup-H3-Studio.cmd`をもう一度実行すれば既存ファイルを利用して再開できます。`models/`以下は`.gitignore`対象なので、利用者がforkやcommitをしても巨大な重みが誤ってGitHubへ入らない構成です。
 
 ## Quick Start
 
@@ -14,13 +27,13 @@ MiniMax H3をWindowsのローカルWeb UIから使う、動画＋同期音声生
 - 検証済みRAM: 約253GiB。量子化済みComfyUI経路の最低RAMは未確立なので、64／128GiBでの動作は保証していません
 - [64-bit Python 3.12](https://www.python.org/downloads/release/python-31210/)（Python 3.13は非対応。`winget install --exact --id Python.Python.3.12`でも導入可能）
 - Git for Windows、対応NVIDIA driver、インターネット接続
-- セットアップ開始時に約100GiBの空き容量を推奨。モデル約59.08GiBに加え、ComfyUI環境、取得cache、生成物、参照素材を保存します
+- セットアップ開始時に約110GiBの空き容量を推奨。H3約59.08GiB、必須Qwen planner約7.50GiBに加え、ComfyUI環境、取得cache、生成物、参照素材を保存します
 
 PythonのCUDA wheelにruntimeが含まれるため、CUDA Toolkitを別途インストールする必要はありません。NVIDIA driverはCUDA 13.0 runtimeを扱える必要があり、セットアップ中に実CUDA処理まで検査します。管理者権限やシステムPythonの変更は行いません。Windowsの長いpath問題を避けるため、空きのあるドライブの`C:\AI\H3-STUDIO`や`D:\AI\H3-STUDIO`のような短い場所へのcloneを推奨します。
 
 ### 初回だけ
 
-PowerShellで空きのある保存先へ移動し、cloneします。
+PowerShellで空きのある既存の保存先へ移動し、cloneします。次の`C:\AI`は例なので、存在しない場合は先に`New-Item -ItemType Directory -Path C:\AI`で作るか、自分の既存フォルダへ置き換えてください。
 
 ```powershell
 Set-Location C:\AI
@@ -29,7 +42,7 @@ Set-Location .\H3-STUDIO
 .\Setup-H3-Studio.cmd
 ```
 
-ライセンス原文を確認し、利用資格と同意を確認できる場合だけ`ACCEPT`と入力してください。セットアップはPython 3.12を自動検出し、Web UI、固定ComfyUI、量子化済みモデル、SageAttentionを隔離環境へ構築します。途中で通信が切れても同じファイルを再実行すれば取得を再開できます。
+最初にMiniMax H3のライセンス原文を確認し、利用資格と同意を確認できる場合だけ`ACCEPT`と入力してください。Apache-2.0の必須Qwen plannerには追加のクリック同意はなく、自動取得されます。通常UIで使わない旧LFM翻訳モデルは初回セットアップでは自動的に省略するため、無関係なライセンス選択は求めません。セットアップはPython 3.12を自動検出し、Web UI、固定ComfyUI、量子化済みH3、SageAttention、約7.50GiBのQwen plannerを隔離環境へ構築します。途中で通信が切れても同じファイルを再実行すれば取得を再開できます。旧LFM経路とのA/B比較が必要な上級者だけ、[詳細セットアップ](#セットアップ通常のcomfyui経路)の明示スイッチで追加できます。
 
 ### 2回目以降
 
@@ -47,12 +60,15 @@ Set-Location .\H3-STUDIO
 - Omni: 順番付きの画像／動画／音声参照から動画＋同期音声（公式Ref2VA）
 - Omni素材へ公式`<Picture 1>`／`<Video 1>`／`<Audio 1>`タグを自動採番。タグクリックでプロンプトへ挿入
 - Omni参照画像の解析精度を`高速（match）`／`高精度（max）`から選択
-- 生成スタイル、音声・音響、解像度、長さ、品質、seedを簡単設定
-- 音の主役、台詞・声質、環境音・効果音、BGM方針を公式推奨の音響プロンプト構造へ自動変換
+- 生成スタイル、縦横比、解像度段階、長さ、品質、seedを簡単設定。音声の追加設定は通常画面を圧迫しない折り畳み式
+- 縦横比は横16:9／縦9:16／正方形1:1／横4:3／縦3:4、解像度はPreview／SD 480p相当／HD 720p相当／Native 768pを別々に選択
+- 画面では日本語の自然文を入力可能。既定のcommunity plannerが映像・カメラ・音響制御を公開成功例型の英語ブロックへ整理し、公式guideの意味・参照・時系列ルールで検証して`native_clean` workflowへ渡す
+- 台詞・声質・環境音・効果音は映像記述と同じCutへ入力。実際の日本語台詞だけを元の文字列のまま普通の二重引用符内へ1回だけ残し、制御文や禁止文を発話文字列へ混ぜない
 - MP4書き出し直前の最終出力音量を−12～+6dBから選択（実波形へraw dBゲインを適用）
 - 出力サイズ・長さ・denoise回数から相対負荷を表示し、ワンクリックで軽量プレビュー設定へ変更
 - モデル準備、denoise、デコード、MP4書き出しを進捗リングで表示
-- 生成履歴、過去プロンプト＋音響指示の再利用、動画再生、ダウンロード、出力フォルダ表示
+- 生成履歴、過去プロンプト＋任意の音声詳細の再利用、動画再生、ダウンロード、出力フォルダ表示。参照素材は名前・サイズだけで同一視せず、再利用時に安全のためクリアして元の順で再添付
+- 完了／失敗／キャンセル後だけ「生成の詳細を見る」を表示し、実際に渡したプロンプト、自動調整、診断を確認可能
 
 黒いPowerShell画面はローカル生成サーバー本体なので、利用中は閉じないでください。ブラウザのタブを閉じてもサーバーは動き続けます。終了するときはPowerShellで`Ctrl+C`を押します。
 
@@ -60,9 +76,45 @@ Set-Location .\H3-STUDIO
 
 Web境界でもnumeric loopback以外の`Host`、cross-site browser request、専用ローカルヘッダーのない更新操作を拒否します。これはDNS rebindingや、別サイトから勝手にGPUジョブを投入されることを防ぐためです。ジョブ本文は宣言サイズ8GiB、個別ファイル2GiBを上限とし、Omniの件数・種別制限はジョブ用ディレクトリへコピーする前に検査します。画面からの通常操作には追加設定は不要です。
 
-参照素材とジョブ情報は`webui_data/`、完成動画は`outputs/webui/`へ保存され、どちらもGit対象外です。これらは自動削除されないため、容量を空ける場合はH3 Studioを終了してから不要な内容を削除してください。`models/`は再取得に約59.08GiB必要なので、履歴整理の対象と取り違えないでください。GPUジョブは安全のため1本ずつ実行されます。モデルが返す実イベントを進捗の基準にし、イベント間だけ次段階の上限を超えない推定値を小数表示します。denoiseは実際の完了ステップ数を基準に、長い1 stepの途中だけ推定表示します。円内が`ESTIMATE`の間は推定、`PROGRESS`はモデルから届いた実値です。
+参照素材とジョブ情報は`webui_data/`、完成動画は`outputs/webui/`へ保存され、どちらもGit対象外です。これらは自動削除されないため、容量を空ける場合はH3 Studioを終了してから不要な内容を削除してください。`models/`は必須のH3約59.08GiBとQwen planner約7.50GiBだけでも約66.58GiBを再取得するため、履歴整理の対象と取り違えないでください。GPUジョブは安全のため1本ずつ実行されます。モデルが返す実イベントを進捗の基準にし、イベント間だけ次段階の上限を超えない推定値を小数表示します。denoiseは実際の完了ステップ数を基準に、長い1 stepの途中だけ推定表示します。円内が`ESTIMATE`の間は推定、`PROGRESS`はモデルから届いた実値です。
 
 各生成はfreshなprivate ComfyUI childを使い、完了・失敗・キャンセル後に子孫processごと回収します。WindowsではWeb UI→worker、worker→ComfyUIの2段を`KILL_ON_JOB_CLOSE`付きJob Objectへ入れるため、親が先に異常終了した場合も残った子孫をOS側で回収します。キャンセル時は対象engineの所有権をlock内で確定してから停止するため、直後に始まった次ジョブを誤停止しません。通常workerは安定性と後始末を優先して`--cache-none`で起動するため、別ジョブへロード済みモデルを持ち越しません。約59.08GiBの量子化済みモデル群を毎回準備する時間はかかりますが、前ジョブのGPU／RAM状態や固定portを引きずらない構成です。
+
+### 日本語入力とcommunity prompt planner
+
+既定経路は、日本語の制御文をH3へ直接渡す旧`direct`方式ではありません。公開ローカル成功例で再現できた契約――映像・構図・カメラ・動作・音響の制御は英語、実際に発音させる日本語だけを普通の二重引用符内へ置く――に合わせます。参考にした[日本語台詞付きComfyUI実例](https://note.com/mayu_hiraizumi/n/nd66cfebfe5d0)も、英語のscene／camera／audio記述に対して、日本語は引用された台詞1個だけです。
+
+画面には日本語の自然文を入力できます。別processの`Qwen/Qwen3-4B-Instruct-2507`は、意味展開に必要な`style`、`scene`、`shots`、`ambient`、`foley`、`music`、`dialogue_delivery`だけをstrict JSONで返します。H3 Studioの決定論的rendererが、公開成功例と同じ読みやすい`Style / Reference material / Scene / Shot / Audio`の各ブロックへ組み立てます。参照タグ、カット時刻、数値、Seed、解像度、audio policy、台詞原文はコード側が保持・検証し、Qwenに自由生成させません。公式Base／Full-Reference guideは意味・参照関係・時系列の制約に使いますが、動作実績のない旧Context-IR文面を最終promptへ再導入しません。H3同梱のQwen3-VL text encoderを文章生成へ流用せず、画像解析用VLMも追加しません。
+
+実際の台詞はプランナーへ渡す前に退避し、翻訳・要約・句読点補正をせず、最終英語promptの該当Shotへ普通の二重引用符で1回だけ戻します。`<d>`／`</d>`や専用tokenizer shimは既定経路で使いません。引用された明示台詞がなければ発話指示を作らず、明示台詞があればその文字列だけを発話対象にします。曖昧な「キャラクターのセリフ」、禁止文、映像指示、環境音を引用符内へ入れないため、制御prompt全体が読み上げられる経路を作りません。
+
+Qwen出力はstrict schema、Shot順と非重複時刻、参照集合、数値、カメラ方向、台詞の完全一致、日本語残留範囲を検査します。検査に失敗した場合は、旧来の長大なdegraded IRへ黙ってfallbackせず生成前に停止します。同じ入力はprompt／参照inventory／policy hashでcompile cacheを再利用でき、SeedやEasyCacheだけを変えた再生成では再コンパイルしません。RTX 5090での5-Shot実測は初回約42.7秒（モデル読込約9.2秒、生成約33.5秒）で、短い入力やcache hitでは変わります。プランナーprocessはコンパイル後に終了してVRAM／RAMを解放してから、`native_clean`のprivate ComfyUI childを起動します。
+
+`native_clean`は公開ComfyUI H3 workflowと同じnative nodesへ、検証済み英語promptをそのまま渡します。custom tokenizer nodeや旧Context-IR wrapperは挟みません。既に公開例形式へ整えた英語をbyte単位でそのまま使いたい場合は、画面のadvanced pass-through（内部名`raw_en`）を選べます。公開画面の新規入力は`community`と`raw_en`の2方式だけで、任意の`LiquidAI/LFM2-350M-ENJP-MT`は過去方式とのA/B比較用にだけ残し、community既定には使いません。モデル容量、固定revision、SHA-256、ライセンス条件は[MODEL_TERMS.md](./MODEL_TERMS.md)に記載しています。
+
+折り畳み式の「台詞を固定する」は任意の上書き欄です。空欄なら本文中の明示台詞を使い、入力した場合だけ対象Cutの台詞を置き換えます。厳密な時間順を効かせたい大きな動作・台詞・音は、同じCut内でも改行して分ける方が明確です。
+
+元入力は`request.json`へ保存し、H3へ渡した実効英語promptは`execution_request.json`と`prompt_processing/final_prompt.txt`、planner revision、入力／出力SHA-256、検証結果、自動調整は`prompt_processing/report.json`へ保存します。生成後の「生成の詳細を見る」から原文と実効promptの両方を確認できます。
+
+参照動画の埋め込み音声は通常経路で既定`ignore`です。単独音声についても、現在の公開ComfyUI H3 nodeが持つのは声紋だけを抜くspeaker encoderではなく、入力波形全体をAudio VAEでlatent化してRef2VAへ渡す経路です。そのため「声色だけを使い、元の言葉は使わない」という公式prompt指示は確率的な誘導であり、実装上の分離保証ではありません。
+
+H3 Studioは、明示台詞と単独音声が同時にある場合、既定の「指定台詞を優先」で単独音声を実際のH3条件から外します。添付ファイル自体と除外理由は監査用に保存しますが、声色は参照されません。「元音声も使う（実験的）」を明示選択した場合だけ、波形全体を条件へ入れます。この実験設定では元音声の発話、間、場面が指定台詞や映像を上書きする可能性があります。H3の音声は映像と共同生成される確率的出力なので、引用符内の台詞でも発話内容を数学的に完全保証するものではありません。最終検証では動画の全decodeに加え、日本語指定と自動判定の両方でASRを確認します。
+
+この音声参照ポリシーはcommunity plannerとadvanced pass-throughの両方に共通です。英語化はH3へ渡す制御文だけを変更し、Audio VAEへ渡した波形から元発話を分離しません。standalone Audioは音声内容そのものを条件へ入れるため、声色だけを安全に転写する機能としては扱いません。
+
+### 縦横比と解像度
+
+画面では「縦横比」と「解像度」を別々に選びます。`720p`の720pxはH3が要求する32px刻みにならないため、SD／HDは一般的な呼び方を保ちつつ最寄りのH3互換canvasを使い、選択欄と生成概要に実寸も必ず表示します。「軽量プレビュー設定」は選択中の縦横比を保持し、解像度段階だけPreviewへ下げます。
+
+| 縦横比 | Preview | SD 480p相当 | HD 720p相当 | Native 768p |
+|---|---:|---:|---:|---:|
+| 横 16:9 | 672×384 | 864×480 | 1312×736 | 1344×768 |
+| 縦 9:16 | 384×672 | 480×864 | 736×1312 | 768×1344 |
+| 正方形 1:1 | 384×384 | 480×480 | 736×736 | 768×768 |
+| 横 4:3 | 512×384 | 640×480 | 896×672 | 1024×768 |
+| 縦 3:4 | 384×512 | 480×640 | 672×896 | 768×1024 |
+
+ローカル公開されたH3-Baseは768p段までです。公式H3-Regenerate-2Kは公開重みに含まれないため、H3 Studioは1080p／2K／4Kを「直接生成」として表示しません。将来アップスケーラを追加する場合も、生成canvasと完成書き出しサイズを分け、別工程であることが分かるUIにします。
 
 ### 現在のComfyUIバックエンド
 
@@ -75,10 +127,12 @@ Web境界でもnumeric loopback以外の`Host`、cross-site browser request、�
 - モデル5ファイル: 合計63,440,965,087 bytes（約59.08GiB）。個別の期待byte数とSHA-256は`comfy_models.lock.json`へ固定
 - Python: `.comfy-venv`。Web UI本体の`.venv`やlegacy Diffusersとは分離。torch 2.13.0+cu130、torchvision 0.28.0+cu130、torchaudio 2.11.0+cu130、torchao 0.17.0を固定
 - attention: SageAttention `2.2.0+cu130torch2.10.0andhigher.post6`＋triton-windows `3.7.1.post27`を標準ON
+- 既定workflow profile: `native_clean`。公開ComfyUI native H3 nodesだけを使い、custom tokenizer互換層や`<d>` markerを読み込みません。旧互換profileは後方比較用で、通常生成には使いません
+- scheduler: UIを増やさない`auto`。公開ComfyUI workflowの実設定に合わせ、FL2VA（Text／Image／Frames）とRef2VA（Omni）の両方を`simple`へ解決し、実効値をジョブ詳細へ保存。Ref2VAの`normal`は内部明示指定による診断用途としてのみ残す
 
 Omni画像はUIの「参照画像の解析精度」で選べます。初期値の`高速（match）`は元画像を拡大せず、縦横比を維持したまま生成canvasと同程度の総画素数まで必要な場合だけ縮小し、速度比較と安定性を優先します。`高精度（max）`もupscaleは行わず、短辺2048pxを上限に原寸付近のディテールを使うため、人物や製品の同一性を確認するときに向きます。ただし参照tokenが全sampling stepへ入るため、matchより数倍遅くなり得ます。選択値はジョブ履歴へ保存され、プロンプト再利用時にも復元されます。
 
-EasyCacheはComfyUI native nodeによる近似で、初期値は`OFF`です。`保守的`はreuse threshold `0.20`、`高速`は`0.30`で、どちらもsampling区間20%～90%だけを対象にします。12 steps未満のDraftでは自動OFFです。SageAttention定常runでは、EasyCache OFFのPrompt実行39.01秒に対して0.20併用は39.67秒で、8/20 stepsをskipしても総時間は同等でした。映像・音声がわずかに変化し得る近似でもあるため、通常はOFFのまま使い、個別素材で効果を確認したい場合だけ有効にします。
+EasyCacheはComfyUI native nodeによる近似で、初期値は`OFF`です。UIの`公開例`は日本語成功例workflowと同じreuse threshold `0.20`、sampling区間15%～95%です。比較用の`保守的`は`0.20`、`高速`は`0.30`で、どちらも20%～90%だけを対象にします。12 steps未満のDraftでは自動OFFです。手元の別条件ではEasyCache OFFのPrompt実行39.01秒に対して0.20併用は39.67秒で、8/20 stepsをskipしても総時間は同等でした。素材・長さによって効果が異なり、映像・音声もわずかに変化し得るため、個別に比較してください。
 
 SageAttentionは実動画A/Bを通過したため標準ONです。setupはWindows wheel（16,656,067 bytes、SHA-256 `1635283f5c01ec3cda58a784d0d7eabbcaffaf9511d1b263db4750e1ed7958bb`）を固定URLから取得・検証し、ComfyUIへ`--use-sage-attention`を渡します。全Sage出力は124 framesのH.264＋AACを全decodeでき、黒画面やノイズはなく、同seedのPyTorch版と目視でほぼ同等でした。ただし数値的・byte単位で完全同一とは扱いません。互換性問題を切り分ける場合は、起動前に`H3_ATTENTION_BACKEND=pytorch`を指定して公式PyTorch attentionへ戻せます。
 
@@ -112,19 +166,21 @@ Sage標準化後も同じ通常ブラウザ経路を再実行し、fresh private
 
 旧workerのQwenは64層を一度構築してから削るのではなく、checkpointから必要な50層だけを最初から構築します。そのためロード時に`layers.{50...63}`が`UNEXPECTED`と表示されますが、これは意図的に読み飛ばした未使用14層であり、欠損ではありません。実画像2枚のembeddingが旧`hidden_states[50]`と完全一致し、同一seedの連続生成MP4もSHA-256単位で一致することを確認しています。
 
-Omniの番号は素材タイプごとです。たとえば画像→動画→画像→音声のUI順なら、`<Picture 1>`→`<Video 1>`→`<Picture 2>`→`<Audio 1>`になります。並べ替えるとタグも自動再採番されます。動画に音声トラックがある場合、その音声には内部で別途`<Audio n>`が付きます。
+Omniの番号は素材タイプごとです。たとえば画像→動画→画像→音声のUI順なら、`<Picture 1>`→`<Video 1>`→`<Picture 2>`→`<Audio 1>`になります。並べ替えるとタグも自動再採番されます。community planner／advanced pass-throughでは動画内の音声トラックを常に無視し、単独音声だけをUI上で`<Audio n>`として採番します。ただし、明示台詞と既定の「指定台詞を優先」を併用した場合、添付ファイルは監査用に保存するだけで、実行用`references`と実効プロンプトから除外します。「元音声も使う（実験的）」を明示選択した場合だけ、Audio VAEによる全波形条件としてH3へ渡します。動画内音声を個別に声質参照／再利用へ解決する機能は、通常画面から呼ばれない旧Context-IR比較経路にだけ残しています。
 
 ### 音声・音響の指定
 
-H3は映像と音声を別々に後処理するモデルではありません。1つのpacked sequenceを共有33B Transformerでdenoiseし、映像と32kHzステレオ音声を共同生成します。公開モデル入力とComfyUI native H3 nodeには、独立した`audio_prompt`、voice strength、audio guidance scaleはありません。UIの音響欄は、存在しない数値パラメータを装うのではなく、次の内容を元プロンプトとは別の構造へまとめます。
+H3は映像と音声を別々に後処理するモデルではありません。1つのpacked sequenceを共有33B Transformerでdenoiseし、映像と32kHzステレオ音声を共同生成します。公開モデル入力とComfyUI native H3 nodeには、独立した`audio_prompt`、voice strength、audio guidance scaleはありません。通常はメインプロンプトの各Cutへ音を直接書き、折り畳み式の音声詳細は全体傾向や出力ゲインを補助します。
 
 - 音の主役: 会話、環境音、効果音、音楽、静かな音場
-- 台詞・声質: 誰が、どんな声で、何を話すか、口の動きとの同期
-- 環境音・効果音: room tone、天候、フォーリー、動作に同期する効果音
+- Cut内の台詞・声質: 誰が、どんな声で、何を話すか、口の動きとの同期。実発話だけを元言語の普通の二重引用符へ入れ、話者・声質・停止制御は引用符外の英語へ変換
+- Cut内の環境音・効果音: room tone、天候、フォーリー、動作に同期する効果音。元のCutから移動しない
+- 台詞を固定する: 任意。メインプロンプトより優先する明示上書き
+- 全体の音響補足: 任意。全編に共通する音場だけを短い`Audio:`文として追加
 - BGM: 自動、なし、控えめ、はっきり
 - 最終出力音量: −12dB、−6dB、0dB、+3dB、+6dB
 
-内部では公式H3-Context-IRの出力例に合わせて`overall_soundscape:`と`non_diegetic_music:`を組み立てます。音の内容に関する項目は自然言語による生成誘導であり、ミキサーのdB値のような決定的制御ではありません。一方、最終出力音量はComfyUI coreの`AudioAdjustVolume`で、生成後の実波形へ`10^(dB/20)`をそのまま乗算します。normalizationやclipping preventionは行わないため、+3dB／+6dBは元波形のpeak次第でclipし得ます。日本語の会話は公式に安定対応する11言語へ含まれます。Omniの音声ファイルは声質、話速、タイミング、既存BGM等の参照にも使えますが、音声単独では指定できず画像または動画との組み合わせが必要です。
+音の内容に関する項目は自然言語による生成誘導であり、ミキサーのdB値のような決定的制御ではありません。明示台詞を検出すると、音の主役が自動の場合は会話優先へ、環境音等が選択済みなら`dialogue+ambience`等の複合方針へ解決します。一方、最終出力音量はComfyUI coreの`AudioAdjustVolume`で、生成後の実波形へ`10^(dB/20)`をそのまま乗算します。normalizationやclipping preventionは行わないため、+3dB／+6dBは元波形のpeak次第でclipし得ます。日本語の会話は公式に安定対応する11言語へ含まれます。Omniの音声ファイルは画像または動画と組み合わせて使えますが、公開nodeは声質と発話内容を物理的に分離しません。指定台詞を優先する通常生成では音声条件を外し、Audio VAEで波形全体を生成条件に使う場合だけ、実験設定として明示的に選択します。これは参照波形を完成動画へ直接コピーする処理ではありません。
 
 ### 速度を比較するときの注意
 
@@ -149,7 +205,11 @@ H3は映像と音声を別々に後処理するモデルではありません。
 - ModelScope確認revision: `29139ad62f28479297e305d690ee1521042133d4`
 - 公式モデル: <https://huggingface.co/MiniMaxAI/MiniMax-H3>
 - 固定取得revision: `af0fe5abe6fd50d632b65a82fef321c4c5c1f249`（初回公開commit）
-- 最終再確認時の公式head: `9d710aedb174fa4448fcdeeb9a542f11ab52209a`（固定revisionとの差分はREADME 1ファイルのみ。モデル・設定ファイルは同一）
+- 2026-08-04再確認時の公式head: `5d9b308a59ab12e67147f191e184baf704185bd1`。モデル取得とprompt guideの実装根拠は、再現性のため初回公開revisionへ固定
+- 固定Ref prompt guide: <https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/af0fe5abe6fd50d632b65a82fef321c4c5c1f249/docs/VIDEO_PROMPT_WRITING_GUIDE_ref_en.md>
+- 固定Base prompt guide: <https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/af0fe5abe6fd50d632b65a82fef321c4c5c1f249/docs/VIDEO_PROMPT_WRITING_GUIDE_base_en.md>
+- 公式H3-Context-IRは複数のhosted models／servicesへ依存する非公開機能であり、そのサービス自体は再現しません。H3 Studioは公開成功例型の英語`Style / Reference material / Scene / Shot / Audio`ブロックを小型Qwen＋決定論的rendererで作り、公式Full-Reference Rewrite Guideは意味・参照関係・時系列の検証規則として使います。普通の引用符による台詞境界と参照整合もコード側で検証します
+- 公式MiniMax CLI H3 guide参照revision: `7ba4460dbd4af24b6cdc6561d3fd6cbb5cd0dfdc`
 - Diffusers統合PR: <https://github.com/huggingface/diffusers/pull/14355>
 - Diffusers revision: `abc5e9bf71fd38f53cd471bc3acaa84bc5ecbfdc`
 - ComfyUI正式対応PR: <https://github.com/Comfy-Org/ComfyUI/pull/15224>
@@ -182,13 +242,19 @@ MiniMax H3 Community License Agreementは、EU、英国、韓国、米国を適�
 
 ## セットアップ（通常のComfyUI経路）
 
-通常はQuick Startの`Setup-H3-Studio.cmd`を使ってください。内部では、`setup.ps1`が最小構成のWeb UI用`.venv`を作り、`setup_comfy.ps1`がPython 3.12の`.comfy-venv`、固定ComfyUI checkout、固定revisionの5モデル、固定SageAttention wheelを用意します。不要なworkflow templatesリポジトリはcloneせず、旧Diffusers比較環境も通常セットアップへ混ぜません。モデルのbyte数とSHA-256は`comfy_models.lock.json`へ照らして検証します。巨大重み、wheel cache、仮想環境、上流checkoutはGitへ入りません。
+通常はQuick Startの`Setup-H3-Studio.cmd`を使ってください。内部では、`setup.ps1`が最小構成のWeb UI用`.venv`を作り、`setup_comfy.ps1`がPython 3.12の`.comfy-venv`、固定ComfyUI checkout、固定revisionのH3 5モデル、必須Qwen3-4B planner、固定SageAttention wheelを用意します。旧A/B比較用のCPU版LFM翻訳モデルは通常セットアップで省略し、`-AcceptPromptTranslatorLicense`を明示した場合だけ取得します。不要なworkflow templatesリポジトリはcloneせず、旧Diffusers比較環境も通常セットアップへ混ぜません。H3は`comfy_models.lock.json`、Qwen plannerは`prompt_planner.lock.json`、旧LFMは`prompt_translator.lock.json`のbyte数とSHA-256へ照らして検証します。巨大重み、wheel cache、仮想環境、上流checkoutはGitへ入りません。
 
-自動化などでモデル取得を伴うセットアップを直接実行する場合は、公式ライセンスを確認したうえで明示スイッチを付けます。全5モデルが既に正しいサイズで存在し、再ダウンロードしない検査・修復ではスイッチを要求しません。
+自動化などでモデル取得を伴うセットアップを直接実行する場合は、各公式ライセンスを確認したうえでMiniMax H3の明示スイッチを付けます。Apache-2.0のQwen plannerは追加スイッチなしで必ず固定revisionから取得します。旧LFMとの比較も必要なら`-AcceptPromptTranslatorLicense`、不要なら`-SkipPromptTranslator`を指定します。全5個のH3モデルが既に正しく、再ダウンロードしない検査・修復ではMiniMax側の取得スイッチを要求しません。
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup.ps1
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup_comfy.ps1 -AcceptMiniMaxH3License
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup_comfy.ps1 -AcceptMiniMaxH3License -AcceptPromptTranslatorLicense
+```
+
+翻訳モデルを導入しない場合:
+
+```powershell
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup_comfy.ps1 -AcceptMiniMaxH3License -SkipPromptTranslator
 ```
 
 起動前と同じ高速検査を単独で行う場合:
@@ -197,7 +263,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup_comfy.ps
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup_comfy.ps1 -VerifyOnly -SkipModelHash
 ```
 
-5ファイル約59.08GiBを読み直して完全SHA-256検査する場合は`-SkipModelHash`を外します。通常起動は固定source SHA、隔離runtime、CUDA、5ファイルの厳密なbyte数だけを高速検査します。
+H3の5ファイル約59.08GiBを読み直して完全SHA-256検査する場合は`-SkipModelHash`を外します。通常起動は固定source SHA、隔離runtime、CUDA、H3 5ファイルの厳密なbyte数に加え、必須Qwen planner 9ファイルのbyte数とH3 Studio管理の来歴marker（モデルID、固定revision、lock SHA-256、件数、総容量）を高速検査します。約680.75MiBの任意LFM翻訳モデルが導入済みなら、こちらは小さいため毎回SHA-256まで検証します。
 
 SageAttentionを使わずPyTorch attentionで再現・切り分ける場合は、先に稼働中のH3 StudioをそのPowerShellで`Ctrl+C`して終了し、新しいPowerShellで次のように起動します。異なるattention backendの既存serverが動いている場合、起動スクリプトは黙って再利用せず明示的に停止を求めます。
 
@@ -206,7 +272,7 @@ $env:H3_ATTENTION_BACKEND = 'pytorch'
 .\Start-H3-WebUI.cmd
 ```
 
-環境変数を指定しない通常起動はSageAttentionです。SageAttention wheelの導入自体を避けて初回構築する場合は、同じ環境変数を設定してから`Setup-H3-Studio.cmd`を実行してください。PyTorch構成では第三者SageAttention wheelとtriton-windowsを取得しません。ブラウザE2Eを再現する最小設定は、Text、`320×192`、約5秒（124 frames）、Draft 8、EasyCache OFFです。
+環境変数を指定しない通常起動はSageAttentionです。SageAttention wheelの導入自体を避けて初回構築する場合は、同じ環境変数を設定してから`Setup-H3-Studio.cmd`を実行してください。PyTorch構成では第三者SageAttention wheelとtriton-windowsを取得しません。現行ブラウザUIで選べる最小の横16:9設定は、Text、Preview `672×384`、約5秒（124 frames）、Draft 8、EasyCache OFFです。過去のengine-only `320×192`試験値は動作回帰の記録であり、現行UIの解像度候補ではありません。
 
 ### Legacy Diffusers比較の再構築
 

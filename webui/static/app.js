@@ -26,9 +26,11 @@ const ui = {
   referenceList: $("#reference-list"),
   refImageSize: $("#ref-image-size"),
   refImageSizeNote: $("#ref-image-size-note"),
+  referenceAudioPolicyField: $("#reference-audio-policy-field"),
+  standaloneAudioPolicy: $("#standalone-audio-policy"),
+  standaloneAudioPolicyNote: $("#standalone-audio-policy-note"),
   styleStep: $("#style-step"),
   promptStep: $("#prompt-step"),
-  soundStep: $("#sound-step"),
   settingsStep: $("#settings-step"),
   prompt: $("#prompt"),
   promptCount: $("#prompt-count"),
@@ -44,17 +46,21 @@ const ui = {
   soundscapeCount: $("#soundscape-count"),
   audioGain: $("#audio-gain"),
   quality: $("#quality"),
-  resolution: $("#resolution"),
+  aspectRatio: $("#aspect-ratio"),
+  resolutionQuality: $("#resolution-quality"),
   duration: $("#duration"),
   seed: $("#seed"),
   acceleration: $("#acceleration"),
   accelerationNote: $("#acceleration-note"),
+  promptProcessingMode: $("#prompt-processing-mode"),
+  promptProcessingNote: $("#prompt-processing-note"),
   weightWarning: $("#weight-warning"),
   weightWarningTitle: $("#weight-warning-title"),
   weightWarningText: $("#weight-warning-text"),
   quickPreview: $("#quick-preview"),
   generate: $("#generate"),
   generateSummary: $("#generate-summary"),
+  translatorWarning: $("#translator-warning"),
   formError: $("#form-error"),
   queueBadge: $("#queue-badge"),
   emptyStage: $("#empty-stage"),
@@ -79,6 +85,19 @@ const ui = {
   errorMessage: $("#error-message"),
   showLog: $("#show-log"),
   logView: $("#log-view"),
+  jobDetails: $("#job-details"),
+  jobDetailsDisclosure: $("#job-details-disclosure"),
+  jobDetailsCaption: $("#job-details-caption"),
+  detailOriginalGroup: $("#detail-original-group"),
+  detailOriginal: $("#detail-original"),
+  detailEffectiveGroup: $("#detail-effective-group"),
+  detailEffective: $("#detail-effective"),
+  detailAdjustmentsGroup: $("#detail-adjustments-group"),
+  detailAdjustments: $("#detail-adjustments"),
+  detailReferenceGroup: $("#detail-reference-group"),
+  detailReference: $("#detail-reference"),
+  detailTechnicalGroup: $("#detail-technical-group"),
+  detailTechnical: $("#detail-technical"),
   historyGrid: $("#history-grid"),
   toast: $("#toast"),
 };
@@ -95,7 +114,73 @@ const state = {
   pollTimer: null,
   toastTimer: null,
   promptHistorySignature: "",
+  jobDetailsSignature: "",
+  resolutionCatalog: null,
+  resolutionCatalogSignature: "",
   previewUrls: { first: null, last: null },
+};
+
+const fallbackResolutionCatalog = {
+  default_aspect_ratio: "16:9",
+  default_quality: "sd",
+  aspect_ratios: [
+    {
+      id: "16:9",
+      label: "横 16:9",
+      presets: {
+        preview: { width: 672, height: 384 },
+        sd: { width: 864, height: 480 },
+        hd: { width: 1312, height: 736 },
+        native: { width: 1344, height: 768 },
+      },
+    },
+    {
+      id: "9:16",
+      label: "縦 9:16",
+      presets: {
+        preview: { width: 384, height: 672 },
+        sd: { width: 480, height: 864 },
+        hd: { width: 736, height: 1312 },
+        native: { width: 768, height: 1344 },
+      },
+    },
+    {
+      id: "1:1",
+      label: "正方形 1:1",
+      presets: {
+        preview: { width: 384, height: 384 },
+        sd: { width: 480, height: 480 },
+        hd: { width: 736, height: 736 },
+        native: { width: 768, height: 768 },
+      },
+    },
+    {
+      id: "4:3",
+      label: "横 4:3",
+      presets: {
+        preview: { width: 512, height: 384 },
+        sd: { width: 640, height: 480 },
+        hd: { width: 896, height: 672 },
+        native: { width: 1024, height: 768 },
+      },
+    },
+    {
+      id: "3:4",
+      label: "縦 3:4",
+      presets: {
+        preview: { width: 384, height: 512 },
+        sd: { width: 480, height: 640 },
+        hd: { width: 672, height: 896 },
+        native: { width: 768, height: 1024 },
+      },
+    },
+  ],
+  qualities: [
+    { id: "preview", label: "Preview" },
+    { id: "sd", label: "SD 480p相当" },
+    { id: "hd", label: "HD 720p相当" },
+    { id: "native", label: "Native 768p" },
+  ],
 };
 
 const modeDescriptions = {
@@ -147,6 +232,7 @@ const audioPresetLabels = {
 
 const accelerationLabels = {
   off: "高速化OFF",
+  community: "EasyCache 公開例",
   conservative: "EasyCache 保守的",
   balanced: "EasyCache 高速",
 };
@@ -184,17 +270,17 @@ function jobAccelerationMeta(job) {
 }
 
 const samples = {
-  t2v: "A cinematic night scene in Tokyo. A black sports car moves slowly through a rain-soaked neon street. Reflections shimmer on the asphalt. Rain, tires passing through puddles, and distant city ambience can be heard.",
-  i2v: "The subject begins moving naturally and looks toward the camera. The camera slowly pushes in. Subtle room ambience and soft clothing movement can be heard.",
-  first_last: "A smooth cinematic transition connects the first frame to the last. Motion remains physically natural and temporally coherent, with matching ambient sound.",
-  omni: "Use the references in order for subject identity, visual language, motion, and sound. Create a coherent cinematic scene with synchronized natural audio.",
+  t2v: "雨の夜の東京。黒いスポーツカーが、ネオンの反射する濡れた路面をゆっくり走る。カメラは車の横を滑らかに追う。雨音、タイヤが水たまりを通る音、遠い街の環境音が続く。",
+  i2v: "開始画像の人物が自然に動き始め、ゆっくりカメラへ顔を向ける。カメラは小さくゆっくり寄る。静かな室内音と、衣服が動く小さな音が聞こえる。",
+  first_last: "開始画像の構図から終了画像の構図へ、人物の動きとカメラ位置が滑らかにつながる。動作は自然な速度を保ち、同じ空間の環境音が途切れず続く。",
+  omni: "Cut1\n<Picture 1>の人物が静かな海辺を歩く。外見と衣装は参照画像どおりに保つ。カメラは正面斜めからゆっくり並走し、穏やかな波音と海風が続く。\n\nCut2\n<Picture 1>の人物がカメラを見て、やわらかな声で「きれいな海だね。」と一度だけ言う。弱い風が髪と衣服を揺らす。",
 };
 
-function toast(message) {
+function toast(message, duration = 3300) {
   clearTimeout(state.toastTimer);
   ui.toast.textContent = message;
   ui.toast.classList.add("visible");
-  state.toastTimer = setTimeout(() => ui.toast.classList.remove("visible"), 3300);
+  state.toastTimer = setTimeout(() => ui.toast.classList.remove("visible"), duration);
 }
 
 function formatBytes(bytes) {
@@ -307,8 +393,7 @@ function setMode(mode) {
   ui.lastImageHint.textContent = mode === "first_last" ? "必須" : "任意";
   ui.styleStep.textContent = hasAttachment ? "03" : "02";
   ui.promptStep.textContent = hasAttachment ? "04" : "03";
-  ui.soundStep.textContent = hasAttachment ? "05" : "04";
-  ui.settingsStep.textContent = hasAttachment ? "06" : "05";
+  ui.settingsStep.textContent = hasAttachment ? "05" : "04";
   updateSummary();
 }
 
@@ -358,6 +443,40 @@ function referenceTag(type, index) {
   return `<${label} ${index}>`;
 }
 
+function jobReferenceMap(job) {
+  if (job?.mode !== "omni") return [];
+  const counts = { image: 0, video: 0, audio: 0 };
+  return (job?.attachments || [])
+    .filter((attachment) => ["image", "video", "audio"].includes(attachment?.kind))
+    .map((attachment) => {
+      counts[attachment.kind] += 1;
+      return {
+        kind: attachment.kind,
+        name: String(attachment.name || ""),
+        size: Number(attachment.size || 0),
+        tag: referenceTag(attachment.kind, counts[attachment.kind]),
+      };
+    });
+}
+
+function attachmentSignature(job) {
+  return (job?.attachments || [])
+    .map((entry) => [entry?.kind || "", entry?.name || "", Number(entry?.size || 0)].join("\u0002"))
+    .join("\u0003");
+}
+
+function prepareReferencesForReuse(job) {
+  const expected = jobReferenceMap(job);
+  if (!expected.length) return "";
+  // Browser File objects do not expose a trusted persisted content hash.  A
+  // filename+size comparison can mistake different content for the old input,
+  // so prompt reuse always requires explicit reattachment in the audited order.
+  state.references = [];
+  renderReferences();
+  const order = expected.map((entry) => `${entry.tag} ${entry.name}`).join(" → ");
+  return `内容の取り違えを防ぐため参照素材をクリアしました。同じ順で再添付: ${order}`;
+}
+
 function insertReferenceTag(tag) {
   const start = ui.prompt.selectionStart ?? ui.prompt.value.length;
   const end = ui.prompt.selectionEnd ?? start;
@@ -379,6 +498,13 @@ function addReferences(files) {
   state.references.push(...incoming.slice(0, remaining));
   if (incoming.length > remaining) toast("Omni参照は合計12素材までです。");
   renderReferences();
+}
+
+function updateStandaloneAudioPolicyNote() {
+  const fullContent = ui.standaloneAudioPolicy.value === "full_content";
+  ui.standaloneAudioPolicyNote.textContent = fullContent
+    ? "音声波形全体をH3へ渡します。声色・抑揚だけでなく、元音声の言葉、間、場面まで出力へ強く影響する場合があります。"
+    : "明示台詞がある生成では、添付音声をH3の生成条件から外します。声色は参照されません。";
 }
 
 function renderReferences() {
@@ -440,6 +566,10 @@ function renderReferences() {
     item.append(number, copy, actions);
     ui.referenceList.append(item);
   });
+  const hasStandaloneAudio = state.references.some((file) => referenceType(file) === "audio");
+  ui.referenceAudioPolicyField.classList.toggle("hidden", !hasStandaloneAudio);
+  if (!hasStandaloneAudio) ui.standaloneAudioPolicy.value = "dialogue_priority";
+  updateStandaloneAudioPolicyNote();
   updateSummary();
 }
 
@@ -451,11 +581,14 @@ function renderPromptHistory() {
     const normalized = String(job.prompt || "").trim();
     const promptKey = [
       normalized,
+      job.prompt_processing_mode || "community",
+      job.standalone_audio_policy_requested || "dialogue_priority",
       job.audio_preset || "auto",
       job.dialogue || "",
       job.soundscape || "",
       job.music_policy || "auto",
       job.audio_gain_db ?? 0,
+      attachmentSignature(job),
     ].join("\u0001");
     if (!normalized || prompts.has(promptKey)) return;
     prompts.add(promptKey);
@@ -464,11 +597,14 @@ function renderPromptHistory() {
   const signature = unique.slice(0, 20).map((job) => [
     job.id,
     job.prompt,
+    job.prompt_processing_mode,
+    job.standalone_audio_policy_requested,
     job.audio_preset,
     job.dialogue,
     job.soundscape,
     job.music_policy,
     job.audio_gain_db,
+    attachmentSignature(job),
   ].join("\u0001")).join("\u0000");
   if (signature === state.promptHistorySignature) return;
   state.promptHistorySignature = signature;
@@ -491,6 +627,23 @@ function renderPromptHistory() {
 }
 
 function restoreAudioPrompt(job) {
+  const riskyAudioPolicy = [
+    job?.standalone_audio_policy_requested,
+    job?.standalone_audio_policy_effective,
+  ].some((value) => ["full_content", "legacy_full_content"].includes(value));
+  const riskyPromptProcessing = !["community", "raw_en"].includes(
+    job?.prompt_processing_mode || "community",
+  );
+  // Preserve either of the public native-clean routes. Legacy processing modes
+  // return to the community planner because they can contain old IR or <d> tags.
+  const restoredPromptMode = ["community", "raw_en"].includes(job?.prompt_processing_mode)
+    ? job.prompt_processing_mode
+    : "community";
+  ui.promptProcessingMode.value = restoredPromptMode;
+  // Full-content Audio is an explicit risk opt-in and is never silently
+  // restored from history.  A reused job always returns to the safe policy.
+  ui.standaloneAudioPolicy.value = "dialogue_priority";
+  updateStandaloneAudioPolicyNote();
   ui.soundPreset.value = job?.audio_preset || "auto";
   ui.musicPolicy.value = job?.music_policy || "auto";
   ui.dialogue.value = job?.dialogue || "";
@@ -498,21 +651,198 @@ function restoreAudioPrompt(job) {
   ui.soundscape.value = job?.soundscape || "";
   ui.soundscapeCount.textContent = String(ui.soundscape.value.length);
   ui.audioGain.value = String(job?.audio_gain_db ?? 0);
-  updateSummary();
+  ui.soundSection.open = Boolean(
+    ui.dialogue.value
+    || ui.soundscape.value
+    || ui.soundPreset.value !== "auto"
+    || ui.musicPolicy.value !== "auto"
+    || ui.audioGain.value !== "0"
+  );
+  syncPromptModeControls({ resetRawFields: restoredPromptMode === "raw_en" });
+  const messages = [];
+  if (riskyAudioPolicy) {
+    messages.push("元音声を使う実験設定は安全のため復元せず、「指定台詞を優先」へ戻しました。");
+  }
+  if (riskyPromptProcessing) {
+    messages.push("日本語本文の直渡しは復元せず、本文の読み上げを避ける推奨処理へ戻しました。");
+  }
+  return messages.join(" ");
 }
 
 function reusePromptOnly(job) {
   if (!job) return;
   setPromptValue(job.prompt, true);
-  restoreAudioPrompt(job);
+  const audioPolicyMessage = restoreAudioPrompt(job);
+  const referenceMessage = prepareReferencesForReuse(job);
   ui.prompt.closest(".form-section").scrollIntoView({ behavior: "smooth", block: "center" });
-  toast("プロンプトと音響指示を復元しました。参照タグもそのまま再利用できます。");
+  const messages = [referenceMessage, audioPolicyMessage].filter(Boolean);
+  toast(messages.join(" ") || "プロンプトと任意の音声詳細を復元しました。", messages.length ? 9000 : 3300);
+}
+
+function validResolutionPreset(preset) {
+  const width = Number(preset?.width);
+  const height = Number(preset?.height);
+  return Number.isInteger(width) && width > 0 && Number.isInteger(height) && height > 0;
+}
+
+function normalizeResolutionCatalog(rawCatalog) {
+  const usable = rawCatalog
+    && Array.isArray(rawCatalog.aspect_ratios)
+    && Array.isArray(rawCatalog.qualities);
+  const source = usable ? rawCatalog : fallbackResolutionCatalog;
+  const qualities = source.qualities
+    .filter((quality) => quality && typeof quality.id === "string")
+    .map((quality) => ({ id: quality.id, label: String(quality.label || quality.id) }));
+  const aspectRatios = source.aspect_ratios
+    .filter((aspect) => aspect && typeof aspect.id === "string" && aspect.presets)
+    .map((aspect) => {
+      const presets = {};
+      qualities.forEach((quality) => {
+        const preset = aspect.presets[quality.id];
+        if (!validResolutionPreset(preset)) return;
+        presets[quality.id] = {
+          width: Number(preset.width),
+          height: Number(preset.height),
+          label: String(preset.label || `${preset.width}×${preset.height}`),
+        };
+      });
+      return { id: aspect.id, label: String(aspect.label || aspect.id), presets };
+    })
+    .filter((aspect) => Object.keys(aspect.presets).length > 0);
+
+  if ((!qualities.length || !aspectRatios.length) && source !== fallbackResolutionCatalog) {
+    return normalizeResolutionCatalog(fallbackResolutionCatalog);
+  }
+  const defaultAspect = aspectRatios.some((aspect) => aspect.id === source.default_aspect_ratio)
+    ? source.default_aspect_ratio
+    : aspectRatios[0].id;
+  const defaultAspectEntry = aspectRatios.find((aspect) => aspect.id === defaultAspect);
+  const defaultQuality = defaultAspectEntry.presets[source.default_quality]
+    ? source.default_quality
+    : qualities.find((quality) => defaultAspectEntry.presets[quality.id])?.id;
+  return {
+    default_aspect_ratio: defaultAspect,
+    default_quality: defaultQuality,
+    aspect_ratios: aspectRatios,
+    qualities,
+  };
+}
+
+function activeResolutionCatalog() {
+  return state.resolutionCatalog || normalizeResolutionCatalog(fallbackResolutionCatalog);
+}
+
+function selectedResolutionAspect() {
+  const catalog = activeResolutionCatalog();
+  return catalog.aspect_ratios.find((aspect) => aspect.id === ui.aspectRatio.value)
+    || catalog.aspect_ratios[0];
+}
+
+function syncResolutionQualityOptions(preferredQuality = ui.resolutionQuality.value) {
+  const catalog = activeResolutionCatalog();
+  const aspect = selectedResolutionAspect();
+  ui.aspectRatio.value = aspect.id;
+  ui.resolutionQuality.replaceChildren();
+  catalog.qualities.forEach((quality) => {
+    const preset = aspect.presets[quality.id];
+    if (!validResolutionPreset(preset)) return;
+    const option = document.createElement("option");
+    option.value = quality.id;
+    option.textContent = `${quality.label} · ${preset.width}×${preset.height}`;
+    ui.resolutionQuality.append(option);
+  });
+  const available = Array.from(ui.resolutionQuality.options).map((option) => option.value);
+  ui.resolutionQuality.value = available.includes(preferredQuality)
+    ? preferredQuality
+    : available.includes(catalog.default_quality)
+      ? catalog.default_quality
+      : available[0] || "";
+}
+
+function configureResolutionControls(rawCatalog) {
+  const catalog = normalizeResolutionCatalog(rawCatalog);
+  const signature = JSON.stringify(catalog);
+  if (signature === state.resolutionCatalogSignature) return;
+
+  const previousAspect = ui.aspectRatio.value;
+  const previousQuality = ui.resolutionQuality.value;
+  state.resolutionCatalog = catalog;
+  state.resolutionCatalogSignature = signature;
+  ui.aspectRatio.replaceChildren();
+  catalog.aspect_ratios.forEach((aspect) => {
+    const option = document.createElement("option");
+    option.value = aspect.id;
+    option.textContent = aspect.label;
+    ui.aspectRatio.append(option);
+  });
+  const aspectIds = catalog.aspect_ratios.map((aspect) => aspect.id);
+  ui.aspectRatio.value = aspectIds.includes(previousAspect)
+    ? previousAspect
+    : catalog.default_aspect_ratio;
+  syncResolutionQualityOptions(previousQuality || catalog.default_quality);
+  updateSummary();
+}
+
+function selectedResolutionPreset() {
+  const catalog = activeResolutionCatalog();
+  const aspect = selectedResolutionAspect();
+  const quality = catalog.qualities.find((item) => item.id === ui.resolutionQuality.value);
+  const preset = aspect.presets[quality?.id];
+  if (!quality || !validResolutionPreset(preset)) return null;
+  return {
+    aspectId: aspect.id,
+    aspectLabel: aspect.label,
+    qualityId: quality.id,
+    qualityLabel: quality.label,
+    width: Number(preset.width),
+    height: Number(preset.height),
+  };
+}
+
+function setResolutionSelection(aspectId, qualityId) {
+  const catalog = activeResolutionCatalog();
+  const aspect = catalog.aspect_ratios.find((item) => item.id === aspectId)
+    || catalog.aspect_ratios.find((item) => item.id === catalog.default_aspect_ratio)
+    || catalog.aspect_ratios[0];
+  ui.aspectRatio.value = aspect.id;
+  syncResolutionQualityOptions(qualityId || catalog.default_quality);
+}
+
+function selectNearestResolution(width, height) {
+  const targetWidth = Number(width);
+  const targetHeight = Number(height);
+  const catalog = activeResolutionCatalog();
+  if (!(targetWidth > 0 && targetHeight > 0)) {
+    setResolutionSelection(catalog.default_aspect_ratio, catalog.default_quality);
+    return selectedResolutionPreset();
+  }
+
+  let nearest = null;
+  catalog.aspect_ratios.forEach((aspect) => {
+    catalog.qualities.forEach((quality) => {
+      const preset = aspect.presets[quality.id];
+      if (!validResolutionPreset(preset)) return;
+      const exact = preset.width === targetWidth && preset.height === targetHeight;
+      const areaDelta = Math.abs(Math.log((preset.width * preset.height) / (targetWidth * targetHeight)));
+      const aspectDelta = Math.abs(Math.log((preset.width / preset.height) / (targetWidth / targetHeight)));
+      const score = exact ? -1 : areaDelta + (aspectDelta * 2);
+      if (!nearest || score < nearest.score) {
+        nearest = { aspectId: aspect.id, qualityId: quality.id, score };
+      }
+    });
+  });
+  setResolutionSelection(nearest?.aspectId, nearest?.qualityId);
+  return selectedResolutionPreset();
 }
 
 function updateSummary() {
   updateModeDescription();
   const quality = ui.quality.options[ui.quality.selectedIndex].text.split(" · ")[0];
-  const resolution = ui.resolution.value.replace("x", "×");
+  const resolution = selectedResolutionPreset();
+  const resolutionQuality = resolution?.qualityLabel.split(/\s+/)[0] || "—";
+  const resolutionSummary = resolution
+    ? `${resolution.aspectId} · ${resolutionQuality} · ${resolution.width}×${resolution.height}`
+    : "解像度未設定";
   const duration = ui.duration.options[ui.duration.selectedIndex].text;
   const audio = audioPresetLabels[ui.soundPreset.value] || "音は自動";
   const requestedAcceleration = ui.acceleration.value;
@@ -520,12 +850,12 @@ function updateSummary() {
   const acceleration = cacheAutoOff
     ? "EasyCache 自動OFF"
     : accelerationLabels[requestedAcceleration] || "高速化OFF";
-  ui.generateSummary.textContent = `${resolution} · ${duration} · ${quality} · ${audio} · ${acceleration}`;
+  ui.generateSummary.textContent = `${resolutionSummary} · ${duration} · ${quality} · ${audio} · ${acceleration}`;
   ui.accelerationNote.classList.toggle("auto-off", cacheAutoOff);
   ui.accelerationNote.textContent = cacheAutoOff
     ? "Draft（steps<12）のため、この生成ではEasyCacheを自動OFFにします。Standard / Highでは選択した近似処理を使い、映像と音声がわずかに変わる可能性があります。"
-    : "EasyCacheは前ステップの計算を再利用する近似処理です。20 step前後で効果が出やすく、Draft（steps<12）では自動OFF。映像と音声がわずかに変わる可能性があります。";
-  const [width, height] = ui.resolution.value.split("x").map(Number);
+    : "公開例はthreshold 0.20・sampling 15%～95%。EasyCacheは近似処理なので、Draft（steps<12）では自動OFF。映像と音声がわずかに変わる可能性があります。";
+  const { width, height } = resolution || { width: 0, height: 0 };
   const denoiseForwards = Math.max(1, Number(ui.quality.value) - 1);
   const baselineWork = 960 * 544 * 124 * 7;
   const outputWork = width * height * Number(ui.duration.value) * denoiseForwards;
@@ -554,9 +884,48 @@ function updateSummary() {
   ui.weightWarningText.textContent = `基準は960×544・約5秒・Draftです。これは画素数・長さ・denoise回数だけの相対目安です。${referenceNote}`;
 }
 
+function updateTranslatorWarning() {
+  const wantsCommunityPlanner = ui.promptProcessingMode.value === "community";
+  const plannerReady = state.capabilities?.prompt_planner?.ready === true;
+  const show = wantsCommunityPlanner && !plannerReady;
+  ui.translatorWarning.classList.toggle("hidden", !show);
+  ui.translatorWarning.textContent = show
+    ? "公開成功例方式に必要なローカルQwenプロンプトモデルが未準備です。Setup-H3-Studioを再実行してください。モデルをH3と同時常駐させることはありません。"
+    : "";
+}
+
+function syncPromptModeControls({ resetRawFields = false } = {}) {
+  const raw = ui.promptProcessingMode.value === "raw_en";
+  if (raw && resetRawFields) {
+    setStyle("natural");
+    ui.soundPreset.value = "auto";
+    ui.musicPolicy.value = "auto";
+    ui.dialogue.value = "";
+    ui.dialogueCount.textContent = "0";
+    ui.soundscape.value = "";
+    ui.soundscapeCount.textContent = "0";
+    ui.audioGain.value = "0";
+    ui.soundSection.open = false;
+  }
+
+  $$("#style-row .style-chip").forEach((button) => {
+    button.disabled = raw;
+  });
+  const soundControlsReady = state.capabilities?.audio_controls?.supported === true && !raw;
+  [ui.soundPreset, ui.musicPolicy, ui.dialogue, ui.soundscape, ui.audioGain].forEach((element) => {
+    element.disabled = !soundControlsReady;
+  });
+  ui.promptProcessingNote.textContent = raw
+    ? "英語H3プロンプトを検証後、そのままnative Comfyへ渡します。スタイル・台詞・音響は別欄から追記されないため、必要な内容をこのプロンプト1本へ書いてください。"
+    : "日本語の意図を短い英語Storyboardへローカル変換し、実際の台詞だけを普通の引用符内へ原文のまま残します。独自IR・<d>・tokenizerパッチは使いません。変換後の全文は生成後の詳細で確認できます。";
+  updateTranslatorWarning();
+  updateSummary();
+}
+
 function validateForm() {
   const prompt = ui.prompt.value.trim();
   if (!prompt) return "プロンプトを入力してください。";
+  if (!selectedResolutionPreset()) return "解像度設定を読み込めませんでした。ページを再読み込みしてください。";
   if (state.mode === "i2v" && !state.firstFile) return "開始画像を追加してください。";
   if (state.mode === "first_last" && (!state.firstFile || !state.lastFile)) return "開始画像と終了画像を追加してください。";
   if (state.mode === "omni" && !state.references.length) return "Omni参照素材を追加してください。";
@@ -569,11 +938,13 @@ async function submitJob() {
   ui.formError.textContent = error || "";
   if (error) return;
 
-  const [width, height] = ui.resolution.value.split("x").map(Number);
+  const { width, height } = selectedResolutionPreset();
   const data = new FormData();
   data.append("mode", state.mode);
   data.append("style", state.style);
-  data.append("prompt", ui.prompt.value.trim());
+  // raw_en is an audit/pass-through mode, so preserve the textarea bytes.
+  // Empty-input validation above may inspect trim(), but submission must not.
+  data.append("prompt", ui.prompt.value);
   data.append("width", String(width));
   data.append("height", String(height));
   data.append("num_frames", ui.duration.value);
@@ -581,6 +952,8 @@ async function submitJob() {
   data.append("seed", ui.seed.value || "42");
   data.append("acceleration", ui.acceleration.value);
   data.append("ref_image_size", ui.refImageSize.value);
+  data.append("prompt_processing_mode", ui.promptProcessingMode.value);
+  data.append("standalone_audio_policy", ui.standaloneAudioPolicy.value);
   data.append("audio_preset", ui.soundPreset.value);
   data.append("dialogue", ui.dialogue.value.trim());
   data.append("soundscape", ui.soundscape.value.trim());
@@ -612,19 +985,19 @@ async function submitJob() {
 
 function updateSystem(snapshot, capabilities) {
   state.capabilities = capabilities;
+  configureResolutionControls(capabilities.resolution);
   const ready = capabilities.fl2va;
   ui.modelDot.classList.toggle("ready", ready);
   ui.modelStatus.textContent = ready ? "FL2VA READY" : "MODEL MISSING";
   ui.omniLock.textContent = capabilities.ref2va ? "READY" : "Ref2VA準備中";
   ui.omniLock.classList.toggle("ready", capabilities.ref2va);
+  updateTranslatorWarning();
   const soundControlsReady = capabilities.audio_controls?.supported === true;
   ui.soundSection.classList.toggle("pending", !soundControlsReady);
-  [ui.soundPreset, ui.musicPolicy, ui.dialogue, ui.soundscape, ui.audioGain].forEach((element) => {
-    element.disabled = !soundControlsReady;
-  });
   ui.soundStatus.textContent = soundControlsReady
-    ? "会話・環境音・効果音・BGMの指示を、公式推奨の音響プロンプト形式へ自動でまとめます。"
+    ? "日本語台詞は原文のまま1回だけ保持し、映像・カメラ・音響の英語制御文とは分離します。"
     : "現在の生成が終わったあと、H3 Studioサーバーを再起動すると音響コントロールが有効になります。";
+  syncPromptModeControls();
 
   if (snapshot.gpu) {
     ui.gpuStatus.textContent = `GPU ${snapshot.gpu.utilization}% · ${Math.round(snapshot.gpu.memory_used_mib / 1024)}GB`;
@@ -644,15 +1017,222 @@ function showOnly(name) {
   Object.entries(mapping).forEach(([key, element]) => element.classList.toggle("hidden", key !== name));
 }
 
+function hasDetailValue(value) {
+  if (value === null || value === undefined) return false;
+  if (typeof value === "string") return Boolean(value.trim());
+  if (Array.isArray(value)) return value.length > 0;
+  if (typeof value === "object") return Object.keys(value).length > 0;
+  return true;
+}
+
+function firstDetailValue(...values) {
+  return values.find((value) => hasDetailValue(value));
+}
+
+function detailObject(value) {
+  return value && typeof value === "object" && !Array.isArray(value) ? value : {};
+}
+
+function compactDetailObject(entries) {
+  return Object.fromEntries(Object.entries(entries).filter(([, value]) => hasDetailValue(value)));
+}
+
+function detailMessage(item) {
+  if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+  const message = item.message ?? item.text ?? item.detail ?? item.description;
+  if (!hasDetailValue(message)) return null;
+  const label = item.level ?? item.severity ?? item.code ?? item.kind;
+  return label ? `[${label}] ${message}` : String(message);
+}
+
+function formatDetailValue(value, preserveString = false) {
+  if (typeof value === "string") return preserveString ? value : value.trim();
+  if (Array.isArray(value)) {
+    const messages = value.map((item) => detailMessage(item));
+    if (messages.every(Boolean)) return messages.map((message) => `• ${message}`).join("\n");
+    if (value.every((item) => ["string", "number", "boolean"].includes(typeof item))) {
+      return value.map((item) => `• ${item}`).join("\n");
+    }
+  }
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function setDetailGroup(group, content, value, preserveString = false) {
+  const visible = hasDetailValue(value);
+  group.classList.toggle("hidden", !visible);
+  content.textContent = visible ? formatDetailValue(value, preserveString) : "";
+  if (!visible) group.open = false;
+  return visible;
+}
+
+function compilerDetails(job) {
+  const compiler = detailObject(job.compiler);
+  const promptIr = detailObject(job.prompt_ir);
+  const compilerResult = detailObject(job.compiler_result);
+  return {
+    compiler,
+    promptIr,
+    compilerResult,
+    effectivePrompt: firstDetailValue(
+      job.effective_prompt,
+      job.compiled_prompt,
+      typeof job.prompt_ir === "string" ? job.prompt_ir : null,
+      compiler.effective_prompt,
+      compiler.compiled_prompt,
+      compiler.rendered_prompt,
+      compiler.prompt,
+      promptIr.effective_prompt,
+      promptIr.rendered_prompt,
+      promptIr.prompt,
+      compilerResult.effective_prompt,
+      compilerResult.rendered_prompt,
+      compilerResult.prompt,
+    ),
+    adjustments: firstDetailValue(
+      job.auto_adjustments,
+      compiler.auto_adjustments,
+      compiler.adjustments,
+      promptIr.auto_adjustments,
+      promptIr.adjustments,
+      compilerResult.auto_adjustments,
+      compilerResult.adjustments,
+    ),
+  };
+}
+
+function renderJobDetails(job) {
+  const terminal = job && !["queued", "running"].includes(job.status);
+  ui.jobDetails.classList.toggle("hidden", !terminal);
+  if (!terminal) {
+    ui.jobDetailsDisclosure.open = false;
+    state.jobDetailsSignature = "";
+    return;
+  }
+
+  const { compiler, promptIr, compilerResult, effectivePrompt, adjustments } = compilerDetails(job);
+  const originalPrompt = firstDetailValue(job.original_prompt, job.prompt);
+  const compilerDiagnostics = firstDetailValue(
+    job.compiler_diagnostics,
+    compiler.diagnostics,
+    promptIr.diagnostics,
+    compilerResult.diagnostics,
+  );
+  const referenceInfo = firstDetailValue(
+    job.reference_analysis,
+    job.reference_map,
+    compiler.reference_analysis,
+    compiler.reference_map,
+    compiler.references,
+    promptIr.reference_analysis,
+    promptIr.reference_map,
+  );
+  const compilerMetadata = compactDetailObject({
+    status: compiler.status,
+    context_ir: compiler.context_ir,
+    dialogue_policy: compiler.dialogue_policy,
+    dialogue_source: compiler.dialogue_source,
+    dialogue_count: compiler.dialogue_count,
+    dialogue_events: compiler.dialogue_events,
+    audio_preset_requested: compiler.audio_preset_requested,
+    audio_preset_effective: compiler.audio_preset_effective,
+    degraded: compiler.degraded,
+    local_only: compiler.local_only,
+    model_inference: compiler.model_inference,
+    mode: compiler.mode ?? promptIr.mode ?? compilerResult.mode,
+    version: compiler.version ?? promptIr.version ?? compilerResult.version,
+    schema: compiler.schema ?? promptIr.schema ?? compilerResult.schema,
+    provenance: compiler.provenance,
+    diagnostics: compilerDiagnostics,
+  });
+  const references = compactDetailObject({
+    compiler: compilerMetadata,
+    references: referenceInfo,
+    attachments: job.attachments,
+    standalone_audio_policy_requested: job.standalone_audio_policy_requested,
+    standalone_audio_policy_effective: job.standalone_audio_policy_effective,
+    standalone_audio_conditioning: job.standalone_audio_conditioning,
+    excluded_audio_reference_ids: job.excluded_audio_reference_ids,
+  });
+  const technical = compactDetailObject({
+    job_id: job.id,
+    status: job.status,
+    backend: job.backend,
+    attention_backend: job.attention_backend,
+    mode: job.mode,
+    resolution: job.width && job.height ? `${job.width}x${job.height}` : null,
+    frames: job.num_frames,
+    steps: job.steps,
+    seed: job.seed,
+    acceleration: job.acceleration ?? job.acceleration_mode,
+    scheduler: job.scheduler,
+    cache: job.cache,
+    audio_output: job.audio_output,
+    timings: job.timings,
+    media: job.media,
+    engine: detailObject(job.technical).engine,
+    runtime_diagnostics: job.diagnostics,
+  });
+  const signature = JSON.stringify([
+    job.id,
+    job.finished_at,
+    originalPrompt,
+    effectivePrompt,
+    adjustments,
+    references,
+    technical,
+  ]);
+  if (signature === state.jobDetailsSignature) return;
+
+  const changedJob = ui.jobDetails.dataset.jobId !== job.id;
+  if (changedJob) {
+    ui.jobDetailsDisclosure.open = false;
+    [
+      ui.detailOriginalGroup,
+      ui.detailEffectiveGroup,
+      ui.detailAdjustmentsGroup,
+      ui.detailReferenceGroup,
+      ui.detailTechnicalGroup,
+    ].forEach((group) => { group.open = false; });
+  }
+  ui.jobDetails.dataset.jobId = job.id;
+  state.jobDetailsSignature = signature;
+
+  const visibleLabels = [];
+  if (setDetailGroup(ui.detailOriginalGroup, ui.detailOriginal, originalPrompt, true)) {
+    visibleLabels.push("入力した原文");
+  }
+  if (setDetailGroup(ui.detailEffectiveGroup, ui.detailEffective, effectivePrompt, true)) {
+    visibleLabels.push("実効プロンプト");
+  }
+  if (setDetailGroup(ui.detailAdjustmentsGroup, ui.detailAdjustments, adjustments)) {
+    visibleLabels.push("自動調整");
+  }
+  if (setDetailGroup(ui.detailReferenceGroup, ui.detailReference, references)) {
+    visibleLabels.push("参考情報");
+  }
+  if (setDetailGroup(ui.detailTechnicalGroup, ui.detailTechnical, technical)) {
+    visibleLabels.push("技術情報");
+  }
+  ui.jobDetailsCaption.textContent = visibleLabels.length
+    ? `${visibleLabels.join("・")}を必要なときだけ確認できます`
+    : "このジョブには追加情報がありません";
+}
+
 function renderSelectedJob() {
   const job = selectedJob();
   if (!job) {
     ui.queueBadge.textContent = "待機中";
     showOnly("empty");
+    renderJobDetails(null);
     return;
   }
 
   ui.queueBadge.textContent = statusLabels[job.status] || job.status;
+  renderJobDetails(job);
   if (["queued", "running"].includes(job.status)) {
     showOnly("progress");
     const progress = displayedProgress(job);
@@ -784,11 +1364,15 @@ function resetForm() {
   setStyle("natural");
   setPromptValue("");
   ui.quality.value = "20";
-  ui.resolution.value = "640x384";
+  const resolutionCatalog = activeResolutionCatalog();
+  setResolutionSelection(resolutionCatalog.default_aspect_ratio, resolutionCatalog.default_quality);
   ui.duration.value = "124";
   ui.seed.value = "42";
   ui.acceleration.value = "off";
   ui.refImageSize.value = "match";
+  ui.promptProcessingMode.value = "community";
+  ui.standaloneAudioPolicy.value = "dialogue_priority";
+  updateStandaloneAudioPolicyNote();
   ui.soundPreset.value = "auto";
   ui.musicPolicy.value = "auto";
   ui.dialogue.value = "";
@@ -796,11 +1380,12 @@ function resetForm() {
   ui.soundscape.value = "";
   ui.soundscapeCount.textContent = "0";
   ui.audioGain.value = "0";
+  ui.soundSection.open = false;
   setFrameFile("first", null);
   setFrameFile("last", null);
   state.references = [];
   renderReferences();
-  updateSummary();
+  syncPromptModeControls();
   ui.formError.textContent = "";
 }
 
@@ -811,14 +1396,16 @@ function reuseSelectedJob() {
   setStyle(job.style);
   setPromptValue(job.prompt);
   ui.quality.value = String(job.steps);
-  ui.resolution.value = `${job.width}x${job.height}`;
+  selectNearestResolution(job.width, job.height);
   ui.duration.value = String(job.num_frames);
   ui.seed.value = String(job.seed);
   ui.acceleration.value = job.acceleration || job.acceleration_mode || "off";
   ui.refImageSize.value = job.ref_image_size || "match";
-  restoreAudioPrompt(job);
-  updateSummary();
-  if (job.attachments?.length) toast("設定を戻しました。参照素材だけ再添付してください。");
+  const audioPolicyMessage = restoreAudioPrompt(job);
+  const referenceMessage = prepareReferencesForReuse(job);
+  syncPromptModeControls();
+  const messages = [referenceMessage, audioPolicyMessage].filter(Boolean);
+  if (messages.length) toast(messages.join(" "), 9000);
   window.scrollTo({ top: 0, behavior: "smooth" });
 }
 
@@ -873,7 +1460,21 @@ function initializeEvents() {
   ui.reusePrompt.addEventListener("click", () => {
     reusePromptOnly(state.jobs.find((job) => job.id === ui.promptHistory.value));
   });
-  [ui.quality, ui.resolution, ui.duration, ui.acceleration, ui.refImageSize, ui.soundPreset, ui.musicPolicy].forEach((element) => element.addEventListener("change", updateSummary));
+  ui.aspectRatio.addEventListener("change", () => {
+    syncResolutionQualityOptions();
+    updateSummary();
+  });
+  [ui.quality, ui.resolutionQuality, ui.duration, ui.acceleration, ui.refImageSize, ui.soundPreset, ui.musicPolicy].forEach((element) => element.addEventListener("change", updateSummary));
+  ui.promptProcessingMode.addEventListener("change", () => {
+    syncPromptModeControls({ resetRawFields: true });
+    if (ui.promptProcessingMode.value === "raw_en") {
+      toast("英語直結モードへ合わせ、別欄のスタイル・台詞・音響設定を自動に戻しました。");
+    }
+  });
+  ui.standaloneAudioPolicy.addEventListener("change", () => {
+    updateStandaloneAudioPolicyNote();
+    updateSummary();
+  });
   ui.dialogue.addEventListener("input", () => {
     ui.dialogueCount.textContent = String(ui.dialogue.value.length);
   });
@@ -882,10 +1483,12 @@ function initializeEvents() {
   });
   ui.quickPreview.addEventListener("click", () => {
     ui.quality.value = "8";
-    ui.resolution.value = "640x384";
+    const aspectId = selectedResolutionAspect()?.id || activeResolutionCatalog().default_aspect_ratio;
+    setResolutionSelection(aspectId, "preview");
     ui.duration.value = "124";
     updateSummary();
-    toast("軽量プレビュー設定（640×384・約5秒・Draft）へ変更しました。");
+    const preview = selectedResolutionPreset();
+    toast(`軽量プレビュー設定（${preview.width}×${preview.height}・約5秒・Draft）へ変更しました。`);
   });
   $("#random-seed").addEventListener("click", () => {
     ui.seed.value = String(Math.floor(Math.random() * 2_147_483_647));

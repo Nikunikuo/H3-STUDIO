@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Annotated, Any
 
 import psutil
+import av
 import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, PlainTextResponse
@@ -30,7 +31,19 @@ from .comfy_workflow import (
     TEXT_ENCODER_MODEL as COMFY_TEXT_ENCODER_FILENAME,
     VIDEO_VAE_MODEL as COMFY_VIDEO_VAE_FILENAME,
 )
-from .job_manager import JobManager, TERMINAL_STATES, utc_now
+from .job_manager import (
+    JobManager,
+    PUBLIC_ENGINE_DIAGNOSTIC_FIELDS,
+    TERMINAL_STATES,
+    _validate_direct_reference_tags,
+    community_planner_status,
+    prompt_translator_status,
+    utc_now,
+)
+from .h3_dialogue import DialogueOverrideError, format_inline_dialogue
+from .prompt_guard import sanitize_generation_text
+from .prompt_translation import PromptTranslationError, validate_native_dialogue_blocks
+from .resolutions import resolution_catalog
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -53,7 +66,28 @@ MAX_UPLOAD_BYTES = 2 * 1024**3
 MAX_REQUEST_BYTES = 8 * 1024**3
 LOCAL_MUTATION_HEADER = "X-H3-Studio-Request"
 LOCAL_MUTATION_VALUE = "1"
+# ``community`` is the public-success workflow: Japanese authoring is planned
+# into concise English control prose and only the exact spoken line stays in
+# Japanese quotes. ``raw_en`` is the byte-for-byte escape hatch for users who
+# already have a proven H3 prompt. The older routes remain accepted only so a
+# queued request created by an earlier H3 Studio process can fail/audit cleanly;
+# they are not advertised by the new UI.
+PROMPT_PROCESSING_MODES = ("community", "raw_en", "direct", "official_en")
+PUBLIC_PROMPT_PROCESSING_MODES = ("community", "raw_en")
+STANDALONE_AUDIO_POLICIES = ("dialogue_priority", "full_content")
 _LOCAL_HOST = re.compile(r"^127\.0\.0\.1(?::(?P<port>[1-9][0-9]{0,4}))?$")
+_ADVANCED_AUDIO_CONTROL_RE = re.compile(
+    r"</?d(?:\s[^>]*)?>|"
+    r"<(?:Picture|Video|Audio|Subject)\s+[1-9][0-9]*>|"
+    r"<\|[^>\r\n]+\|>|"
+    r"^(?:subject_definitions|summary|retention_analysis|detailed_description|"
+    r"integrated_multimodal_description|overall_soundscape|non_diegetic_music)\s*:",
+    re.IGNORECASE | re.MULTILINE,
+)
+_LIKELY_EXPLICIT_DIALOGUE_RE = re.compile(
+    r"「[^」\r\n]+」|『[^』\r\n]+』|“[^”\r\n]+”|"
+    r'"[^"\r\n]*[\u3040-\u30ff\u3400-\u9fff][^"\r\n]*"'
+)
 ATTENTION_BACKEND = os.environ.get("H3_ATTENTION_BACKEND", "sage").strip().lower()
 if ATTENTION_BACKEND not in {"sage", "pytorch"}:
     raise RuntimeError("H3_ATTENTION_BACKEND must be 'sage' or 'pytorch'.")
@@ -62,7 +96,7 @@ STYLE_PROMPTS = {
     "natural": "",
     "cinematic": "Cinematic composition, expressive camera movement, natural temporal motion, detailed lighting.",
     "photoreal": "Photorealistic, physically plausible lighting, natural materials, coherent fine details.",
-    "anime": "Polished anime film style, expressive motion, clean linework, rich color design.",
+    "anime": "Polished 2D-animated film style, clean linework, coherent character design, rich color design.",
     "illustration": "Painterly editorial illustration, tactile textures, art-directed color palette, graceful motion.",
     "product": "Premium commercial product film, controlled studio lighting, precise materials, elegant camera work.",
     "moody": "Atmospheric and moody, dramatic shadows, restrained colors, cinematic environmental sound.",
@@ -70,10 +104,9 @@ STYLE_PROMPTS = {
 
 AUDIO_PRESET_PROMPTS = {
     "auto": "",
-    "dialogue": (
-        "Prioritize clear, natural, intelligible dialogue synchronized with visible speech. "
-        "Keep ambience, effects, and music supportive rather than masking the voices."
-    ),
+    # Native <d> blocks already carry a Cut-local, once-only positive contract.
+    # Repeating a global speech instruction adds a second conditioning cue.
+    "dialogue": "",
     "ambience": (
         "Prioritize a detailed spatial soundscape with convincing room tone and environmental ambience. "
         "Keep every sound physically consistent with the visible space and camera distance."
@@ -83,20 +116,20 @@ AUDIO_PRESET_PROMPTS = {
         "Every important visible action should have an appropriate sound."
     ),
     "music": (
-        "Use a music-led soundtrack while preserving essential synchronized dialogue and diegetic sound. "
+        "Use an instrumental music-led soundtrack with physically matched diegetic sound. "
         "Match the musical pacing, mood, and transitions to the visual edit."
     ),
     "quiet": (
-        "Use a restrained, quiet soundscape with subtle room tone and only necessary diegetic sounds. "
-        "Avoid unintended voices, crowd noise, or dramatic sound effects."
+        "Use a restrained, quiet soundscape with subtle room tone and only necessary "
+        "diegetic sounds."
     ),
 }
 
 MUSIC_POLICY_PROMPTS = {
     "auto": "",
-    "none": "No non-diegetic background music. Use only dialogue and sounds that belong to the scene.",
-    "subtle": "Use subtle non-diegetic music at a supportive level beneath dialogue and important sound effects.",
-    "prominent": "Use a prominent non-diegetic musical score whose rhythm and emotional arc follow the edit.",
+    "none": "N/A",
+    "subtle": "A subtle instrumental score supports the physical ambience and important sound effects.",
+    "prominent": "A prominent instrumental score follows the rhythm and emotional arc of the edit.",
 }
 
 
@@ -170,6 +203,8 @@ def capabilities() -> dict[str, Any]:
     shared_ready = all(model_files[name] for name in ("text_encoder", "video_vae", "audio_vae"))
     fl2va_ready = shared_ready and model_files["fl2va"]
     ref2va_ready = shared_ready and model_files["ref2va"]
+    translator = prompt_translator_status(ROOT)
+    planner = community_planner_status(ROOT)
     return {
         "backend": "comfy",
         "ready": all(model_files.values()),
@@ -198,11 +233,30 @@ def capabilities() -> dict[str, Any]:
             "options": ["match", "max"],
             "default": "match",
         },
+        "resolution": resolution_catalog(),
         "audio_controls": {
             "supported": shared_ready,
-            "method": "structured_prompt",
+            "method": "raw_prompt",
             "sample_rate": 32000,
             "channels": 2,
+            "reference_audio": {
+                "voice_only_supported": False,
+                "policy_options": list(STANDALONE_AUDIO_POLICIES),
+                "default": "dialogue_priority",
+                "ui_default": "dialogue_priority",
+                "missing_request_policy": "reject_on_dialogue_conflict",
+                "legacy_persisted_request_fallback": "legacy_full_content",
+                "full_content_opt_in": True,
+            },
+        },
+        "prompt_translator": translator,
+        "prompt_planner": planner,
+        "prompt_processing": {
+            "options": list(PUBLIC_PROMPT_PROCESSING_MODES),
+            "default": "community",
+            "recommended": "community",
+            "planner_required_for": ["community"],
+            "native_comfy_profile": "native_clean",
         },
         "local_only": True,
     }
@@ -251,6 +305,17 @@ def _public_job(job: dict[str, Any]) -> dict[str, Any]:
     public = dict(job)
     public.pop("output_path", None)
     public.pop("preview_path", None)
+    technical = public.get("technical")
+    if isinstance(technical, dict):
+        public_technical = dict(technical)
+        engine = public_technical.get("engine")
+        if isinstance(engine, dict):
+            public_technical["engine"] = {
+                key: value
+                for key, value in engine.items()
+                if key in PUBLIC_ENGINE_DIAGNOSTIC_FIELDS
+            }
+        public["technical"] = public_technical
     public["can_cancel"] = job.get("status") not in TERMINAL_STATES
     return public
 
@@ -364,13 +429,22 @@ async def _save_upload(upload: UploadFile, target_dir: Path, index: int, expecte
                 raise HTTPException(413, f"{original_name}が2GiBを超えています。")
             handle.write(chunk)
     await upload.close()
-    return {
+    metadata = {
         "original_name": original_name,
         "stored_path": os.fspath(target.resolve()),
         "kind": kind,
         "size": size,
         "content_type": upload.content_type,
     }
+    if kind == "video":
+        try:
+            with av.open(os.fspath(target)) as container:
+                metadata["has_audio"] = bool(container.streams.audio)
+        except (OSError, av.error.FFmpegError):
+            # The generation worker performs the authoritative decode.  Keep
+            # probe failures distinct from a successfully inspected silent file.
+            pass
+    return metadata
 
 
 def _validate_parameters(
@@ -384,6 +458,8 @@ def _validate_parameters(
     seed: int,
     acceleration: str,
     ref_image_size: str,
+    prompt_processing_mode: str,
+    standalone_audio_policy: str | None,
     audio_preset: str,
     dialogue: str,
     soundscape: str,
@@ -403,6 +479,13 @@ def _validate_parameters(
         raise HTTPException(400, "不明な高速化設定です。")
     if ref_image_size not in {"match", "max"}:
         raise HTTPException(400, "不明なOmni参照精度です。")
+    if prompt_processing_mode not in PROMPT_PROCESSING_MODES:
+        raise HTTPException(400, "不明なプロンプト処理方式です。")
+    if (
+        standalone_audio_policy is not None
+        and standalone_audio_policy not in STANDALONE_AUDIO_POLICIES
+    ):
+        raise HTTPException(400, "不明な音声参照ポリシーです。")
     if audio_preset not in AUDIO_PRESET_PROMPTS:
         raise HTTPException(400, "不明な音響プリセットです。")
     if music_policy not in MUSIC_POLICY_PROMPTS:
@@ -411,6 +494,20 @@ def _validate_parameters(
         raise HTTPException(400, "プロンプトは1～4000文字で入力してください。")
     if len(dialogue) > 800 or len(soundscape) > 800:
         raise HTTPException(400, "台詞・声質と環境音・効果音は、それぞれ800文字以内で入力してください。")
+    if _ADVANCED_AUDIO_CONTROL_RE.search(soundscape):
+        raise HTTPException(
+            400,
+            "環境音・効果音欄にはH3制御タグやセクション見出しを入力できません。"
+            "参照タグはメインプロンプトまたは台詞・声質欄で指定してください。",
+        )
+    try:
+        # The legacy dialogue override intentionally supports an already-native
+        # H3 block and <Audio N> voice references.  Reject malformed, unsupported,
+        # or reserved-token dialogue payloads through the same validator used at
+        # the final JobManager boundary instead of blanket-blocking valid input.
+        validate_native_dialogue_blocks(dialogue)
+    except PromptTranslationError as exc:
+        raise HTTPException(400, f"台詞・声質欄のH3台詞形式が不正です: {exc}") from exc
     if not -24 <= audio_gain_db <= 12 or not float(audio_gain_db).is_integer():
         raise HTTPException(400, "最終出力音量は−24～+12 dBの整数で指定してください。")
     if width % 32 or height % 32 or not (192 <= width <= 1344) or not (192 <= height <= 1344):
@@ -452,26 +549,115 @@ def _compose_effective_prompt(
     dialogue: str,
     soundscape: str,
     music_policy: str,
-) -> str:
-    sections = [prompt.strip()]
+    mode: str = "omni",
+    *,
+    include_audio_references: bool = True,
+) -> tuple[str, dict[str, Any]]:
+    """Compose a direct H3 prompt without generating Context-IR.
+
+    The main prompt is authoritative.  Explicit quoted speech stays in its
+    original Cut and is wrapped with H3's native dialogue boundary.  The legacy
+    dialogue field is an optional deterministic override, never a global Audio
+    payload.
+    """
+
+    formatted_dialogue = format_inline_dialogue(
+        prompt,
+        dialogue,
+        normalize_decorative=mode == "omni",
+        include_audio_references=include_audio_references,
+        canonicalize_native_context=True,
+    )
+    has_dialogue = bool(formatted_dialogue.events)
+    guarded_prompt = sanitize_generation_text(
+        formatted_dialogue.text,
+        trusted_speech_fragments=formatted_dialogue.trusted_fragments,
+    )
+    guarded_soundscape = sanitize_generation_text(soundscape)
+    visual_prompt = guarded_prompt.text or (
+        "A visually stable scene follows the supplied reference material and settings."
+    )
+    sections = [visual_prompt]
     style_prompt = STYLE_PROMPTS[style]
     if style_prompt:
-        sections.append(f"visual_style:\n{style_prompt}")
+        sections.append(f"Visual style: {style_prompt}")
 
-    sound_lines = []
-    if AUDIO_PRESET_PROMPTS[audio_preset]:
-        sound_lines.append(AUDIO_PRESET_PROMPTS[audio_preset])
-    if dialogue.strip():
-        sound_lines.append(f"Dialogue and voice direction: {dialogue.strip()}")
-    if soundscape.strip():
-        sound_lines.append(f"Ambience, foley, and sound effects: {soundscape.strip()}")
+    effective_audio_preset = audio_preset
+    if not has_dialogue and effective_audio_preset == "dialogue":
+        effective_audio_preset = "ambience"
+    elif has_dialogue and effective_audio_preset == "auto":
+        effective_audio_preset = "dialogue"
+    elif has_dialogue and effective_audio_preset != "dialogue":
+        effective_audio_preset = f"dialogue+{effective_audio_preset}"
+
+    sound_lines: list[str] = []
+    requested_sound_preset = audio_preset
+    # With the normal Auto setting, the Cut-local prompt is the complete source
+    # of truth.  Add a global audio tendency only when the user explicitly opens
+    # the advanced controls and chooses one (or supplies a global supplement).
+    if not has_dialogue and requested_sound_preset == "dialogue":
+        requested_sound_preset = "ambience"
+    if requested_sound_preset not in {"auto", "dialogue"}:
+        sound_lines.append(AUDIO_PRESET_PROMPTS[requested_sound_preset])
+    if guarded_soundscape.text:
+        sound_lines.append(guarded_soundscape.text)
     if sound_lines:
-        sections.append("overall_soundscape:\n" + "\n".join(sound_lines))
+        sections.append("Audio: " + " ".join(sound_lines))
 
     music_prompt = MUSIC_POLICY_PROMPTS[music_policy]
     if music_prompt:
-        sections.append(f"non_diegetic_music:\n{music_prompt}")
-    return "\n\n".join(sections)
+        sections.append(f"Music: {music_prompt}")
+
+    removed_fragments = tuple(
+        dict.fromkeys(
+            (*guarded_prompt.removed_fragments, *guarded_soundscape.removed_fragments)
+        )
+    )
+    dialogue_events: list[dict[str, Any]] = []
+    suppressed_audio_references = 0
+    for event in formatted_dialogue.events:
+        serialized = event.to_dict()
+        requested_audio_ids = list(event.audio_reference_ids)
+        requested_audio_id = event.audio_reference_id
+        effective_audio_id = (
+            requested_audio_id if include_audio_references else None
+        )
+        suppressed = requested_audio_id is not None and effective_audio_id is None
+        if suppressed:
+            suppressed_audio_references += 1
+        serialized.update(
+            audio_reference_ids_requested=requested_audio_ids,
+            audio_reference_id_requested=requested_audio_id,
+            audio_reference_id_effective=effective_audio_id,
+            audio_reference_suppressed=suppressed,
+        )
+        dialogue_events.append(serialized)
+
+    adjustments = list(formatted_dialogue.adjustments)
+    diagnostics = list(formatted_dialogue.diagnostics)
+    if suppressed_audio_references:
+        adjustments.append("REFERENCE_AUDIO_EXCLUDED_FOR_DIALOGUE_PRIORITY")
+        diagnostics.append("REFERENCE_AUDIO_FULL_CONTENT_CONDITIONING_DISABLED")
+
+    processing = {
+        "mode": "raw_guarded",
+        "context_ir": False,
+        "dialogue_policy": "inline_h3_native" if has_dialogue else "none",
+        "dialogue_source": formatted_dialogue.source,
+        "dialogue_count": len(formatted_dialogue.events),
+        "dialogue_events": dialogue_events,
+        "audio_preset_requested": audio_preset,
+        "audio_preset_effective": effective_audio_preset,
+        "removed_speech_cues": list(removed_fragments),
+        "rewritten_gaze_cues": (
+            guarded_prompt.rewritten_gaze_cues
+            + guarded_soundscape.rewritten_gaze_cues
+        ),
+        "positive_sound_cues": [],
+        "auto_adjustments": list(dict.fromkeys(adjustments)),
+        "diagnostics": list(dict.fromkeys(diagnostics)),
+    }
+    return "\n\n".join(sections), processing
 
 
 @app.post("/api/jobs")
@@ -486,6 +672,8 @@ async def create_job(
     seed: Annotated[int, Form()],
     acceleration: Annotated[str, Form()] = "off",
     ref_image_size: Annotated[str, Form()] = "match",
+    prompt_processing_mode: Annotated[str, Form()] = "community",
+    standalone_audio_policy: Annotated[str | None, Form()] = None,
     audio_preset: Annotated[str, Form()] = "auto",
     dialogue: Annotated[str, Form()] = "",
     soundscape: Annotated[str, Form()] = "",
@@ -506,6 +694,8 @@ async def create_job(
         seed,
         acceleration,
         ref_image_size,
+        prompt_processing_mode,
+        standalone_audio_policy,
         audio_preset,
         dialogue,
         soundscape,
@@ -526,13 +716,182 @@ async def create_job(
             for index, upload in enumerate(reference_uploads)
         ]
 
-        effective_prompt = _compose_effective_prompt(
-            prompt,
-            style,
-            audio_preset,
-            dialogue,
-            soundscape,
-            music_policy,
+        reference_audio_count = sum(
+            1 for item in reference_meta if item.get("kind") == "audio"
+        )
+        raw_reference_diagnostics = _validate_direct_reference_tags(
+            "\n".join(part for part in (prompt, dialogue) if part),
+            mode=mode,
+            references=reference_meta,
+        )
+        if raw_reference_diagnostics:
+            diagnostic = raw_reference_diagnostics[0]
+            status_code = (
+                409
+                if diagnostic.get("code") == "PROMPT_REFERENCE_OUT_OF_RANGE"
+                else 400
+            )
+            raise HTTPException(status_code, str(diagnostic.get("message")))
+        include_audio_references = standalone_audio_policy != "dialogue_priority"
+        if prompt_processing_mode in {"community", "raw_en"}:
+            # Do not run the legacy formatter/guard here.  It introduced native
+            # <d> blocks, English harness text, and style injections before the
+            # prompt reached ComfyUI.  Public local successes instead use one
+            # ordinary prompt edge with English control prose and a normal
+            # quoted Japanese line.  Community planning happens once, in the
+            # cancellable background job, after uploads are immutable.
+            effective_prompt = prompt
+            has_explicit_dialogue = bool(
+                dialogue.strip() or _LIKELY_EXPLICIT_DIALOGUE_RE.search(prompt)
+            )
+            if prompt_processing_mode == "raw_en":
+                if re.search(r"</?d(?:\s[^>]*)?>", effective_prompt, re.IGNORECASE):
+                    raise HTTPException(
+                        400,
+                        "公開Comfy互換の英語直結では<d>タグを使用しません。"
+                        "日本語台詞は普通の二重引用符で1回だけ記述してください。",
+                    )
+                if any(
+                    (
+                        style != "natural",
+                        audio_preset != "auto",
+                        bool(dialogue.strip()),
+                        bool(soundscape.strip()),
+                        music_policy != "auto",
+                    )
+                ):
+                    raise HTTPException(
+                        400,
+                        "英語プロンプト直結ではスタイル・台詞・音響の別欄を追記しません。"
+                        "必要な指示をメインプロンプト1本へまとめ、各別欄を自動／空欄に戻してください。",
+                    )
+            prompt_processing = {
+                "mode": (
+                    "community_planner"
+                    if prompt_processing_mode == "community"
+                    else "native_raw"
+                ),
+                "status": "queued" if prompt_processing_mode == "community" else "raw_en",
+                "context_ir": False,
+                "dialogue_policy": "ordinary_quote" if has_explicit_dialogue else "none",
+                "dialogue_count": 1 if has_explicit_dialogue else 0,
+                "dialogue_events": [],
+                "processing_mode_requested": prompt_processing_mode,
+                "processing_mode_effective": prompt_processing_mode,
+                "local_only": True,
+                "model_inference": prompt_processing_mode == "community",
+                "auto_adjustments": [],
+                "diagnostics": [],
+            }
+        else:
+            # Compatibility only for jobs submitted by an older local UI.
+            try:
+                effective_prompt, prompt_processing = _compose_effective_prompt(
+                    prompt,
+                    style,
+                    audio_preset,
+                    dialogue,
+                    soundscape,
+                    music_policy,
+                    mode,
+                    include_audio_references=include_audio_references,
+                )
+            except DialogueOverrideError as exc:
+                raise HTTPException(400, str(exc)) from exc
+            prompt_processing.update(
+                processing_mode_requested=prompt_processing_mode,
+                processing_mode_effective=prompt_processing_mode,
+            )
+            has_explicit_dialogue = bool(prompt_processing.get("dialogue_count"))
+        requested_dialogue_audio_ids = sorted(
+            {
+                int(audio_id)
+                for event in prompt_processing.get("dialogue_events", [])
+                for audio_id in event.get("audio_reference_ids_requested", [])
+            }
+        )
+        invalid_dialogue_audio_ids = [
+            audio_id
+            for audio_id in requested_dialogue_audio_ids
+            if audio_id < 1 or audio_id > reference_audio_count
+        ]
+        if invalid_dialogue_audio_ids:
+            raise HTTPException(
+                409,
+                "台詞が参照しているstandalone Audio番号に対応する添付がありません: "
+                + ", ".join(f"<Audio {audio_id}>" for audio_id in invalid_dialogue_audio_ids),
+            )
+        if "AMBIGUOUS_DIALOGUE_AUDIO_REFERENCE" in prompt_processing.get(
+            "diagnostics", []
+        ):
+            raise HTTPException(
+                409,
+                "1つの台詞へ複数のstandalone Audioが割り当てられています。"
+                "台詞ごとにAudio参照を1つだけ指定してください。",
+            )
+        if (
+            reference_audio_count
+            and has_explicit_dialogue
+            and standalone_audio_policy is None
+        ):
+            raise HTTPException(
+                409,
+                "明示台詞とstandalone Audioを併用する場合は、音声参照の使い方を明示してください。"
+                "指定台詞を優先してAudio条件を外すdialogue_priority、または元音声全体を使う"
+                "full_contentのどちらかを選択できます。",
+            )
+        exclude_reference_audio = bool(
+            reference_audio_count
+            and has_explicit_dialogue
+            and standalone_audio_policy == "dialogue_priority"
+        )
+        effective_reference_meta = (
+            [item for item in reference_meta if item.get("kind") != "audio"]
+            if exclude_reference_audio
+            else list(reference_meta)
+        )
+        excluded_audio_reference_ids = (
+            list(range(1, reference_audio_count + 1))
+            if exclude_reference_audio
+            else []
+        )
+        if exclude_reference_audio and re.search(
+            r"<Audio\s+[1-9][0-9]*>", effective_prompt
+        ):
+            raise HTTPException(
+                409,
+                "指定台詞を優先するとstandalone AudioはH3条件から外れますが、"
+                "発話句以外にも<Audio N>参照が残っています。Audioタグを外すか、"
+                "元音声全体を使う設定へ変更してください。",
+            )
+        requested_audio_policy = standalone_audio_policy or "unspecified"
+        effective_audio_policy = (
+            standalone_audio_policy
+            if standalone_audio_policy is not None
+            else (
+                "legacy_full_content"
+                if reference_audio_count
+                else "dialogue_priority"
+            )
+        )
+        standalone_audio_conditioning = bool(
+            reference_audio_count and not exclude_reference_audio
+        )
+        if (
+            reference_audio_count
+            and has_explicit_dialogue
+            and standalone_audio_policy == "full_content"
+        ):
+            prompt_processing.setdefault("diagnostics", []).append(
+                "FULL_CONTENT_AUDIO_MAY_OVERRIDE_DIALOGUE"
+            )
+        prompt_processing.update(
+            reference_audio_count=reference_audio_count,
+            standalone_audio_policy_requested=requested_audio_policy,
+            standalone_audio_policy_effective=effective_audio_policy,
+            standalone_audio_conditioning=standalone_audio_conditioning,
+            excluded_audio_reference_ids=excluded_audio_reference_ids,
+            voice_only_reference_supported=False,
         )
         cache = _cache_configuration(acceleration, steps)
         output_path = manager.outputs_dir / f"{job_id}.mp4"
@@ -540,14 +899,22 @@ async def create_job(
         request = {
             "id": job_id,
             "backend": "comfy",
+            "workflow_profile": "native_clean",
             "attention_backend": ATTENTION_BACKEND,
             "acceleration": acceleration,
             "cache": cache,
             "ref_image_size": ref_image_size,
             "mode": mode,
             "style": style,
-            "prompt": prompt.strip(),
+            "style_direction": STYLE_PROMPTS[style],
+            "prompt": prompt,
             "effective_prompt": effective_prompt,
+            "prompt_processing_mode": prompt_processing_mode,
+            "standalone_audio_policy_requested": requested_audio_policy,
+            "standalone_audio_policy_effective": effective_audio_policy,
+            "standalone_audio_conditioning": standalone_audio_conditioning,
+            "excluded_audio_reference_ids": excluded_audio_reference_ids,
+            "prompt_processing": prompt_processing,
             "audio_preset": audio_preset,
             "dialogue": dialogue.strip(),
             "soundscape": soundscape.strip(),
@@ -562,7 +929,8 @@ async def create_job(
             "first_image": first_meta["stored_path"] if first_meta else None,
             "last_image": last_meta["stored_path"] if last_meta else None,
             "attachments": [item for item in (first_meta, last_meta) if item] + reference_meta,
-            "references": reference_meta,
+            "uploaded_references": reference_meta,
+            "references": effective_reference_meta,
             "model_path": os.fspath(COMFY_MODEL_ROOT),
             "output_path": os.fspath(output_path),
             "preview_path": os.fspath(preview_path),
@@ -573,6 +941,7 @@ async def create_job(
         job = {
             "id": job_id,
             "backend": "comfy",
+            "workflow_profile": "native_clean",
             "attention_backend": ATTENTION_BACKEND,
             "acceleration": acceleration,
             "cache": cache,
@@ -587,7 +956,13 @@ async def create_job(
             "finished_at": None,
             "mode": mode,
             "style": style,
-            "prompt": prompt.strip(),
+            "prompt": prompt,
+            "prompt_processing_mode": prompt_processing_mode,
+            "standalone_audio_policy_requested": requested_audio_policy,
+            "standalone_audio_policy_effective": effective_audio_policy,
+            "standalone_audio_conditioning": standalone_audio_conditioning,
+            "excluded_audio_reference_ids": excluded_audio_reference_ids,
+            "prompt_processing": prompt_processing,
             "audio_preset": audio_preset,
             "dialogue": dialogue.strip(),
             "soundscape": soundscape.strip(),

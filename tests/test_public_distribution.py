@@ -1,10 +1,20 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import subprocess
 import unittest
 from pathlib import Path
+
+from webui.job_manager import (
+    COMMUNITY_PLANNER_LOCK,
+    COMMUNITY_PLANNER_MODEL_ID,
+    COMMUNITY_PLANNER_PROVENANCE_FILE,
+    COMMUNITY_PLANNER_PROVENANCE_SCHEMA_VERSION,
+    COMMUNITY_PLANNER_REQUIRED_FILES,
+    COMMUNITY_PLANNER_REVISION,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -75,6 +85,37 @@ class PublicDistributionTests(unittest.TestCase):
                 default = (match.group("default") or "").strip().casefold()
                 self.assertIn(default, {"", '""', "''", "$null"})
 
+    def test_prompt_planner_runtime_dependency_is_pinned(self) -> None:
+        requirements = (ROOT / "requirements.comfy.txt").read_text(encoding="utf-8")
+        self.assertRegex(requirements, r"(?m)^accelerate==1\.14\.0$")
+
+    def test_webui_runtime_includes_video_probe_dependency(self) -> None:
+        requirements = (ROOT / "requirements.webui.txt").read_text(encoding="utf-8")
+        setup = (ROOT / "scripts/setup.ps1").read_text(encoding="utf-8")
+        self.assertRegex(requirements, r"(?m)^av==18\.0\.0$")
+        self.assertIn("import av, fastapi", setup)
+
+    def test_normal_webui_launch_skips_qwen_full_weight_probe(self) -> None:
+        setup = (ROOT / "scripts/setup_comfy.ps1").read_text(encoding="utf-8")
+        start = (ROOT / "scripts/start_webui.ps1").read_text(encoding="utf-8")
+        self.assertIn("Test-PromptPlannerRuntime -LoadWeights:(-not $VerifyOnly)", setup)
+        self.assertIn("-VerifyOnly -SkipModelHash", start)
+
+    def test_first_time_setup_skips_legacy_lfm_unless_explicitly_requested(self) -> None:
+        bootstrap = (ROOT / "scripts/bootstrap.ps1").read_text(encoding="utf-8")
+        self.assertIn("$SkipPromptTranslator = $true", bootstrap)
+        self.assertNotIn("Read-Host \"Type ACCEPT-LFM", bootstrap)
+        self.assertIn("if ($AcceptPromptTranslatorLicense)", bootstrap)
+
+    def test_job_details_show_both_original_and_effective_prompts(self) -> None:
+        html = (ROOT / "webui/static/index.html").read_text(encoding="utf-8")
+        app = (ROOT / "webui/static/app.js").read_text(encoding="utf-8")
+        self.assertIn('id="detail-original-group"', html)
+        self.assertIn('id="detail-effective-group"', html)
+        self.assertIn("入力した原文", html)
+        self.assertIn("const originalPrompt = firstDetailValue(job.original_prompt, job.prompt);", app)
+        self.assertIn("setDetailGroup(ui.detailOriginalGroup", app)
+
     def test_windows_launchers_are_location_independent(self) -> None:
         for relative in ("Setup-H3-Studio.cmd", "Start-H3-WebUI.cmd"):
             with self.subTest(launcher=relative):
@@ -121,6 +162,75 @@ class PublicDistributionTests(unittest.TestCase):
         self.assertRegex(
             source["license_url"],
             r"^https://huggingface\.co/MiniMaxAI/MiniMax-H3/blob/[0-9a-f]{40}/LICENSE$",
+        )
+
+    def test_prompt_planner_lock_matches_the_minimal_runtime_snapshot(self) -> None:
+        lock = json.loads((ROOT / "prompt_planner.lock.json").read_text(encoding="utf-8"))
+        files = lock["files"]
+        expected_names = {
+            "config.json",
+            "generation_config.json",
+            "LICENSE",
+            "model-00001-of-00003.safetensors",
+            "model-00002-of-00003.safetensors",
+            "model-00003-of-00003.safetensors",
+            "model.safetensors.index.json",
+            "tokenizer.json",
+            "tokenizer_config.json",
+        }
+
+        self.assertEqual(9, len(files))
+        self.assertEqual(8_056_459_158, lock["verification"]["total_bytes"])
+        self.assertEqual(lock["verification"]["total_bytes"], sum(item["size"] for item in files))
+        self.assertEqual(
+            expected_names,
+            {Path(item["path"]).name for item in files},
+        )
+        self.assertEqual(
+            COMMUNITY_PLANNER_REQUIRED_FILES,
+            {Path(item["path"]).name: item["size"] for item in files},
+        )
+        for item in files:
+            with self.subTest(model=item["path"]):
+                self.assertTrue(
+                    item["path"].startswith(
+                        "models/prompt_planner/Qwen3-4B-Instruct-2507/"
+                    )
+                )
+                self.assertRegex(item["sha256"], r"^[0-9a-f]{64}$")
+
+        source = lock["source"]
+        self.assertEqual(COMMUNITY_PLANNER_MODEL_ID, source["repo_id"])
+        self.assertEqual("apache-2.0", source["license"].casefold())
+        self.assertEqual(COMMUNITY_PLANNER_REVISION, source["revision"])
+
+    def test_prompt_planner_provenance_is_bound_to_the_complete_lock(self) -> None:
+        lock_path = ROOT / COMMUNITY_PLANNER_LOCK
+        lock = json.loads(lock_path.read_text(encoding="utf-8"))
+        expected = {
+            "schema_version": COMMUNITY_PLANNER_PROVENANCE_SCHEMA_VERSION,
+            "model_id": COMMUNITY_PLANNER_MODEL_ID,
+            "revision": COMMUNITY_PLANNER_REVISION,
+            "lock_sha256": hashlib.sha256(lock_path.read_bytes()).hexdigest(),
+            "file_count": len(COMMUNITY_PLANNER_REQUIRED_FILES),
+            "total_bytes": sum(COMMUNITY_PLANNER_REQUIRED_FILES.values()),
+        }
+        self.assertEqual(9, expected["file_count"])
+        self.assertEqual(8_056_459_158, expected["total_bytes"])
+        self.assertEqual(lock["verification"]["total_bytes"], expected["total_bytes"])
+
+        setup = (ROOT / "scripts/setup_comfy.ps1").read_text(encoding="utf-8")
+        self.assertIn(COMMUNITY_PLANNER_PROVENANCE_FILE, setup)
+        self.assertIn("Test-PromptPlannerFiles -Lock $promptPlannerLock -FullHash", setup)
+        self.assertIn("Write-PromptPlannerProvenance -Lock $promptPlannerLock", setup)
+        self.assertGreaterEqual(
+            setup.count("Test-PromptPlannerProvenance -Lock $promptPlannerLock"),
+            2,
+        )
+        self.assertNotIn(
+            ROOT / "models" / "prompt_planner" / "Qwen3-4B-Instruct-2507" /
+            COMMUNITY_PLANNER_PROVENANCE_FILE,
+            distributable_files(),
         )
 
     def test_repository_line_ending_policy_is_explicit(self) -> None:
