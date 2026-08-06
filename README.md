@@ -1,6 +1,6 @@
-# H3 Studio
+# NIKU H STUDIO
 
-MiniMax H3をWindowsのローカルWeb UIから使う、動画＋同期音声生成スタジオです。Text、Image、開始／終了Frames、複数参照を扱うOmniに対応し、固定revisionのComfyUIバックエンドをH3 Studio自身が起動・停止します。普段の生成でPowerShellコマンドやComfyUIノードを操作する必要はありません。
+MiniMax H3をWindowsのローカルWeb UIから使う、動画＋同期音声生成スタジオです。Text、Image、開始／終了Frames、複数参照を扱うOmniに対応し、固定revisionのComfyUIバックエンドをNIKU H STUDIO自身が起動・停止します。普段の生成でPowerShellコマンドやComfyUIノードを操作する必要はありません。
 
 > [!IMPORTANT]
 > モデル重みはこのGitリポジトリに含まれません。初回セットアップが`Comfy-Org/MiniMax-H3`の固定revisionから必要な5ファイル（約59.08GiB）と、community prompt planner用`Qwen/Qwen3-4B-Instruct-2507`の実行最小9ファイル（約7.50GiB）を取得し、サイズとSHA-256を検証します。MiniMax H3 Community Licenseには適用地域、用途、出力、再配布、商用利用に関する制限があります。セットアップ前に[モデル利用条件](./MODEL_TERMS.md)と[公式ライセンス原文](https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/af0fe5abe6fd50d632b65a82fef321c4c5c1f249/LICENSE)を必ず確認してください。
@@ -9,7 +9,7 @@ MiniMax H3をWindowsのローカルWeb UIから使う、動画＋同期音声生
 
 | 対象 | GitHubに同梱 | 初回セットアップ | ローカル保存先 |
 |---|---|---|---|
-| H3 StudioのWeb UI、生成処理、セットアップスクリプト、テスト | あり | clone時に取得 | リポジトリ内 |
+| NIKU H STUDIOのWeb UI、生成処理、セットアップスクリプト、テスト | あり | clone時に取得 | リポジトリ内 |
 | モデルの固定revision、期待サイズ、SHA-256を記録したlock | あり | clone時に取得 | `comfy_models.lock.json`、`prompt_planner.lock.json` |
 | MiniMax H3の量子化済み重み5ファイル（約59.08GiB） | **なし** | 公式`Comfy-Org/MiniMax-H3`から自動取得 | `models/comfy/` |
 | 日本語prompt整理用Qwen3-4Bの重み9ファイル（約7.50GiB） | **なし** | 公式`Qwen/Qwen3-4B-Instruct-2507`から自動取得 | `models/prompt_planner/Qwen3-4B-Instruct-2507/` |
@@ -46,9 +46,9 @@ Set-Location .\H3-STUDIO
 
 ### 2回目以降
 
-エクスプローラーで`Start-H3-WebUI.cmd`をダブルクリックするだけです。ComfyUIを別途起動する必要はありません。H3 Studioが必要なprivate ComfyUI childを自動管理し、ブラウザで<http://127.0.0.1:7863>を開きます。
+エクスプローラーで`Start-H3-WebUI.cmd`をダブルクリックするだけです。ComfyUIを別途起動する必要はありません。NIKU H STUDIOが必要なprivate ComfyUI childを自動管理し、ブラウザで<http://127.0.0.1:7863>を開きます。
 
-## H3 Studio Web UI（推奨）
+## NIKU H STUDIO Web UI（推奨）
 
 初回セットアップ後は、エクスプローラーで`Start-H3-WebUI.cmd`をダブルクリックすると、ローカル専用Web UIがブラウザで開きます。
 
@@ -72,11 +72,11 @@ Set-Location .\H3-STUDIO
 
 黒いPowerShell画面はローカル生成サーバー本体なので、利用中は閉じないでください。ブラウザのタブを閉じてもサーバーは動き続けます。終了するときはPowerShellで`Ctrl+C`を押します。
 
-ブラウザが接続するのはFastAPI製のH3 Studio（`127.0.0.1:7863`）だけです。生成ジョブが始まると、H3 Studioが固定SHAのComfyUIをprivate childとして動的なloopback portへ起動し、終了・キャンセル時には同じ管理単位で回収します。ComfyUIを固定`8188`番で常駐させたり、ComfyUI標準画面を外部公開したりはしません。
+ブラウザが接続するのはFastAPI製のNIKU H STUDIO（`127.0.0.1:7863`）だけです。生成ジョブが始まると、NIKU H STUDIOが固定SHAのComfyUIをprivate childとして動的なloopback portへ起動し、終了・キャンセル時には同じ管理単位で回収します。ComfyUIを固定`8188`番で常駐させたり、ComfyUI標準画面を外部公開したりはしません。
 
 Web境界でもnumeric loopback以外の`Host`、cross-site browser request、専用ローカルヘッダーのない更新操作を拒否します。これはDNS rebindingや、別サイトから勝手にGPUジョブを投入されることを防ぐためです。ジョブ本文は宣言サイズ8GiB、個別ファイル2GiBを上限とし、Omniの件数・種別制限はジョブ用ディレクトリへコピーする前に検査します。画面からの通常操作には追加設定は不要です。
 
-参照素材とジョブ情報は`webui_data/`、完成動画は`outputs/webui/`へ保存され、どちらもGit対象外です。これらは自動削除されないため、容量を空ける場合はH3 Studioを終了してから不要な内容を削除してください。`models/`は必須のH3約59.08GiBとQwen planner約7.50GiBだけでも約66.58GiBを再取得するため、履歴整理の対象と取り違えないでください。GPUジョブは安全のため1本ずつ実行されます。モデルが返す実イベントを進捗の基準にし、イベント間だけ次段階の上限を超えない推定値を小数表示します。denoiseは実際の完了ステップ数を基準に、長い1 stepの途中だけ推定表示します。円内が`ESTIMATE`の間は推定、`PROGRESS`はモデルから届いた実値です。
+参照素材とジョブ情報は`webui_data/`、完成動画は`outputs/webui/`へ保存され、どちらもGit対象外です。これらは自動削除されないため、容量を空ける場合はNIKU H STUDIOを終了してから不要な内容を削除してください。`models/`は必須のH3約59.08GiBとQwen planner約7.50GiBだけでも約66.58GiBを再取得するため、履歴整理の対象と取り違えないでください。GPUジョブは安全のため1本ずつ実行されます。モデルが返す実イベントを進捗の基準にし、イベント間だけ次段階の上限を超えない推定値を小数表示します。denoiseは実際の完了ステップ数を基準に、長い1 stepの途中だけ推定表示します。円内が`ESTIMATE`の間は推定、`PROGRESS`はモデルから届いた実値です。
 
 各生成はfreshなprivate ComfyUI childを使い、完了・失敗・キャンセル後に子孫processごと回収します。WindowsではWeb UI→worker、worker→ComfyUIの2段を`KILL_ON_JOB_CLOSE`付きJob Objectへ入れるため、親が先に異常終了した場合も残った子孫をOS側で回収します。キャンセル時は対象engineの所有権をlock内で確定してから停止するため、直後に始まった次ジョブを誤停止しません。通常workerは安定性と後始末を優先して`--cache-none`で起動するため、別ジョブへロード済みモデルを持ち越しません。約59.08GiBの量子化済みモデル群を毎回準備する時間はかかりますが、前ジョブのGPU／RAM状態や固定portを引きずらない構成です。
 
@@ -84,7 +84,7 @@ Web境界でもnumeric loopback以外の`Host`、cross-site browser request、�
 
 既定経路は、日本語の制御文をH3へ直接渡す旧`direct`方式ではありません。公開ローカル成功例で再現できた契約――映像・構図・カメラ・動作・音響の制御は英語、実際に発音させる日本語だけを普通の二重引用符内へ置く――に合わせます。参考にした[日本語台詞付きComfyUI実例](https://note.com/mayu_hiraizumi/n/nd66cfebfe5d0)も、英語のscene／camera／audio記述に対して、日本語は引用された台詞1個だけです。
 
-画面には日本語の自然文を入力できます。別processの`Qwen/Qwen3-4B-Instruct-2507`は、意味展開に必要な`style`、`scene`、`shots`、`ambient`、`foley`、`music`、`dialogue_delivery`だけをstrict JSONで返します。H3 Studioの決定論的rendererが、公開成功例と同じ読みやすい`Style / Reference material / Scene / Shot / Audio`の各ブロックへ組み立てます。参照タグ、カット時刻、数値、Seed、解像度、audio policy、台詞原文はコード側が保持・検証し、Qwenに自由生成させません。公式Base／Full-Reference guideは意味・参照関係・時系列の制約に使いますが、動作実績のない旧Context-IR文面を最終promptへ再導入しません。H3同梱のQwen3-VL text encoderを文章生成へ流用せず、画像解析用VLMも追加しません。
+画面には日本語の自然文を入力できます。別processの`Qwen/Qwen3-4B-Instruct-2507`は、意味展開に必要な`style`、`scene`、`shots`、`ambient`、`foley`、`music`、`dialogue_delivery`だけをstrict JSONで返します。NIKU H STUDIOの決定論的rendererが、公開成功例と同じ読みやすい`Style / Reference material / Scene / Shot / Audio`の各ブロックへ組み立てます。参照タグ、カット時刻、数値、Seed、解像度、audio policy、台詞原文はコード側が保持・検証し、Qwenに自由生成させません。公式Base／Full-Reference guideは意味・参照関係・時系列の制約に使いますが、動作実績のない旧Context-IR文面を最終promptへ再導入しません。H3同梱のQwen3-VL text encoderを文章生成へ流用せず、画像解析用VLMも追加しません。
 
 実際の台詞はプランナーへ渡す前に退避し、翻訳・要約・句読点補正をせず、最終英語promptの該当Shotへ普通の二重引用符で1回だけ戻します。`<d>`／`</d>`や専用tokenizer shimは既定経路で使いません。引用された明示台詞がなければ発話指示を作らず、明示台詞があればその文字列だけを発話対象にします。曖昧な「キャラクターのセリフ」、禁止文、映像指示、環境音を引用符内へ入れないため、制御prompt全体が読み上げられる経路を作りません。
 
@@ -98,7 +98,7 @@ Qwen出力はstrict schema、Shot順と非重複時刻、参照集合、数値�
 
 参照動画の埋め込み音声は通常経路で既定`ignore`です。単独音声についても、現在の公開ComfyUI H3 nodeが持つのは声紋だけを抜くspeaker encoderではなく、入力波形全体をAudio VAEでlatent化してRef2VAへ渡す経路です。そのため「声色だけを使い、元の言葉は使わない」という公式prompt指示は確率的な誘導であり、実装上の分離保証ではありません。
 
-H3 Studioは、明示台詞と単独音声が同時にある場合、既定の「指定台詞を優先」で単独音声を実際のH3条件から外します。添付ファイル自体と除外理由は監査用に保存しますが、声色は参照されません。「元音声も使う（実験的）」を明示選択した場合だけ、波形全体を条件へ入れます。この実験設定では元音声の発話、間、場面が指定台詞や映像を上書きする可能性があります。H3の音声は映像と共同生成される確率的出力なので、引用符内の台詞でも発話内容を数学的に完全保証するものではありません。最終検証では動画の全decodeに加え、日本語指定と自動判定の両方でASRを確認します。
+NIKU H STUDIOは、明示台詞と単独音声が同時にある場合、既定の「指定台詞を優先」で単独音声を実際のH3条件から外します。添付ファイル自体と除外理由は監査用に保存しますが、声色は参照されません。「元音声も使う（実験的）」を明示選択した場合だけ、波形全体を条件へ入れます。この実験設定では元音声の発話、間、場面が指定台詞や映像を上書きする可能性があります。H3の音声は映像と共同生成される確率的出力なので、引用符内の台詞でも発話内容を数学的に完全保証するものではありません。最終検証では動画の全decodeに加え、日本語指定と自動判定の両方でASRを確認します。
 
 この音声参照ポリシーはcommunity plannerとadvanced pass-throughの両方に共通です。英語化はH3へ渡す制御文だけを変更し、Audio VAEへ渡した波形から元発話を分離しません。standalone Audioは音声内容そのものを条件へ入れるため、声色だけを安全に転写する機能としては扱いません。
 
@@ -114,7 +114,7 @@ H3 Studioは、明示台詞と単独音声が同時にある場合、既定の�
 | 横 4:3 | 512×384 | 640×480 | 896×672 | 1024×768 |
 | 縦 3:4 | 384×512 | 480×640 | 672×896 | 768×1024 |
 
-ローカル公開されたH3-Baseは768p段までです。公式H3-Regenerate-2Kは公開重みに含まれないため、H3 Studioは1080p／2K／4Kを「直接生成」として表示しません。将来アップスケーラを追加する場合も、生成canvasと完成書き出しサイズを分け、別工程であることが分かるUIにします。
+ローカル公開されたH3-Baseは768p段までです。公式H3-Regenerate-2Kは公開重みに含まれないため、NIKU H STUDIOは1080p／2K／4Kを「直接生成」として表示しません。将来アップスケーラを追加する場合も、生成canvasと完成書き出しサイズを分け、別工程であることが分かるUIにします。
 
 ### 現在のComfyUIバックエンド
 
@@ -132,13 +132,13 @@ H3 Studioは、明示台詞と単独音声が同時にある場合、既定の�
 
 Omni画像はUIの「参照画像の解析精度」で選べます。初期値の`高速（match）`は元画像を拡大せず、縦横比を維持したまま生成canvasと同程度の総画素数まで必要な場合だけ縮小し、速度比較と安定性を優先します。`高精度（max）`もupscaleは行わず、短辺2048pxを上限に原寸付近のディテールを使うため、人物や製品の同一性を確認するときに向きます。ただし参照tokenが全sampling stepへ入るため、matchより数倍遅くなり得ます。選択値はジョブ履歴へ保存され、プロンプト再利用時にも復元されます。
 
-EasyCacheはComfyUI native nodeによる近似で、初期値は`OFF`です。UIの`公開例`は日本語成功例workflowと同じreuse threshold `0.20`、sampling区間15%～95%です。比較用の`保守的`は`0.20`、`高速`は`0.30`で、どちらも20%～90%だけを対象にします。12 steps未満のDraftでは自動OFFです。手元の別条件ではEasyCache OFFのPrompt実行39.01秒に対して0.20併用は39.67秒で、8/20 stepsをskipしても総時間は同等でした。素材・長さによって効果が異なり、映像・音声もわずかに変化し得るため、個別に比較してください。
+EasyCacheはComfyUI native nodeによる近似で、通常生成の初期値は`community`（おすすめ：控えめ）です。UIの`community`は日本語成功例workflowと同じreuse threshold `0.20`、sampling区間15%～95%。`off`（高速化なし）は品質比較の基準、`conservative`（より慎重）は品質優先、`balanced`（速度優先）は試作用として選べます。12 steps未満のDraftでは自動OFFです。手元の別条件ではEasyCache OFFのPrompt実行39.01秒に対して0.20併用は39.67秒で、8/20 stepsをskipしても総時間は同等でした。素材・長さによって効果が異なり、映像・音声もわずかに変化し得るため、個別に比較してください。
 
 SageAttentionは実動画A/Bを通過したため標準ONです。setupはWindows wheel（16,656,067 bytes、SHA-256 `1635283f5c01ec3cda58a784d0d7eabbcaffaf9511d1b263db4750e1ed7958bb`）を固定URLから取得・検証し、ComfyUIへ`--use-sage-attention`を渡します。全Sage出力は124 framesのH.264＋AACを全decodeでき、黒画面やノイズはなく、同seedのPyTorch版と目視でほぼ同等でした。ただし数値的・byte単位で完全同一とは扱いません。互換性問題を切り分ける場合は、起動前に`H3_ATTENTION_BACKEND=pytorch`を指定して公式PyTorch attentionへ戻せます。
 
 ### 実機E2Eと速度確認
 
-ブラウザのH3 Studioからprivate pinned ComfyUI childを起動する通常経路で、`320×192`／124 frames／Draft 8／EasyCache OFFを生成し、初回PyTorch実行を含む総時間86.031秒で完了しました。出力は5.167秒、H.264 124 frames＋AAC 331,776 total samples（165,888／channel）／32kHz stereoで、両streamを全decode済みです。
+ブラウザのNIKU H STUDIOからprivate pinned ComfyUI childを起動する通常経路で、`320×192`／124 frames／Draft 8／EasyCache OFFを生成し、初回PyTorch実行を含む総時間86.031秒で完了しました。出力は5.167秒、H.264 124 frames＋AAC 331,776 total samples（165,888／channel）／32kHz stereoで、両streamを全decode済みです。
 
 Sage標準化後も同じ通常ブラウザ経路を再実行し、fresh private childの起動・固定資産検証を含む総時間44.422秒（Comfy prompt 36.51秒）で完了しました。内訳はComfy起動6.813秒、denoise 19秒、Video VAE 6.10秒、出力全decode検証0.110秒です。ジョブには`backend=comfy`と`attention_backend=sage`が保存され、画面にも`Backend comfy · SageAttention`と表示されます。
 
@@ -159,7 +159,7 @@ Sage標準化後も同じ通常ブラウザ経路を再実行し、fresh private
 ### 旧Diffusers経路の調査記録（比較用）
 
 > [!NOTE]
-> 以下は固定Diffusers PRを使って原因を切り分けた時点の履歴資料です。測定値と実装上の発見を将来の比較に残していますが、旧worker、取得／変換script、専用requirementsは現行HEADから削除済みで、このcheckoutから再実行はできません。現在のH3 Studio生成経路やセットアップ手順として読まないでください。
+> 以下は固定Diffusers PRを使って原因を切り分けた時点の履歴資料です。測定値と実装上の発見を将来の比較に残していますが、旧worker、取得／変換script、専用requirementsは現行HEADから削除済みで、このcheckoutから再実行はできません。現在のNIKU H STUDIO生成経路やセットアップ手順として読まないでください。
 
 旧Diffusers Ref2VA workerでは、マージ済みComfyUI H3実装の品質優先`max`方式を参考に、画像を無意味に拡大せず、短辺2048pxを上限として32px単位へ整列しました。1448×1086の一般的な画像なら実質的にネイティブの1440×1088となり、補間だけで増えるvision tokenを避けます。旧経路の初回モデル切替はRAM使用量が大きいため、ほかの大規模AI処理との同時実行を避けました。
 
@@ -211,7 +211,7 @@ H3は映像と音声を別々に後処理するモデルではありません。
 - 2026-08-04再確認時の公式head: `5d9b308a59ab12e67147f191e184baf704185bd1`。モデル取得とprompt guideの実装根拠は、再現性のため初回公開revisionへ固定
 - 固定Ref prompt guide: <https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/af0fe5abe6fd50d632b65a82fef321c4c5c1f249/docs/VIDEO_PROMPT_WRITING_GUIDE_ref_en.md>
 - 固定Base prompt guide: <https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/af0fe5abe6fd50d632b65a82fef321c4c5c1f249/docs/VIDEO_PROMPT_WRITING_GUIDE_base_en.md>
-- 公式H3-Context-IRは複数のhosted models／servicesへ依存する非公開機能であり、そのサービス自体は再現しません。H3 Studioは公開成功例型の英語`Style / Reference material / Scene / Shot / Audio`ブロックを小型Qwen＋決定論的rendererで作り、公式Full-Reference Rewrite Guideは意味・参照関係・時系列の検証規則として使います。普通の引用符による台詞境界と参照整合もコード側で検証します
+- 公式H3-Context-IRは複数のhosted models／servicesへ依存する非公開機能であり、そのサービス自体は再現しません。NIKU H STUDIOは公開成功例型の英語`Style / Reference material / Scene / Shot / Audio`ブロックを小型Qwen＋決定論的rendererで作り、公式Full-Reference Rewrite Guideは意味・参照関係・時系列の検証規則として使います。普通の引用符による台詞境界と参照整合もコード側で検証します
 - 公式MiniMax CLI H3 guide参照revision: `7ba4460dbd4af24b6cdc6561d3fd6cbb5cd0dfdc`
 - Diffusers統合PR: <https://github.com/huggingface/diffusers/pull/14355>
 - Diffusers revision: `abc5e9bf71fd38f53cd471bc3acaa84bc5ecbfdc`
@@ -229,7 +229,7 @@ H3は映像と音声を別々に後処理するモデルではありません。
 
 ## ライセンス上の注意
 
-H3 Studio独自コードはルートの[MIT License](./LICENSE)で公開します。このMIT Licenseは、MiniMax H3／Comfy-Orgのモデル重み、ComfyUI、SageAttention、Qwen、PyTorch、その他の現行依存物を再ライセンスしません。履歴資料が参照するDiffusersにも当然適用されません。
+NIKU H STUDIO独自コードはルートの[MIT License](./LICENSE)で公開します。このMIT Licenseは、MiniMax H3／Comfy-Orgのモデル重み、ComfyUI、SageAttention、Qwen、PyTorch、その他の現行依存物を再ライセンスしません。履歴資料が参照するDiffusersにも当然適用されません。
 
 MiniMax H3 Community License Agreementは、EU、英国、韓国、米国を適用地域から除外しています。本セットアップは日本国内のローカル環境で検証しています。利用、複製、実行等を行うことでライセンスへ同意した扱いになり得ます。用途、出力、再配布、第三者提供、商用条件を含む重要事項は[MODEL_TERMS.md](./MODEL_TERMS.md)から公式原文を確認してください。依存物のライセンスは[THIRD_PARTY_NOTICES.md](./THIRD_PARTY_NOTICES.md)に整理しています。
 
@@ -260,16 +260,16 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup_comfy.ps
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\scripts\setup_comfy.ps1 -VerifyOnly -SkipModelHash
 ```
 
-H3の5ファイル約59.08GiBを読み直して完全SHA-256検査する場合は`-SkipModelHash`を外します。通常起動は固定source SHA、隔離runtime、CUDA、H3 5ファイルの厳密なbyte数に加え、必須Qwen planner 9ファイルのbyte数とH3 Studio管理の来歴marker（モデルID、固定revision、lock SHA-256、件数、総容量）を高速検査します。
+H3の5ファイル約59.08GiBを読み直して完全SHA-256検査する場合は`-SkipModelHash`を外します。通常起動は固定source SHA、隔離runtime、CUDA、H3 5ファイルの厳密なbyte数に加え、必須Qwen planner 9ファイルのbyte数とNIKU H STUDIO管理の来歴marker（モデルID、固定revision、lock SHA-256、件数、総容量）を高速検査します。
 
-SageAttentionを使わずPyTorch attentionで再現・切り分ける場合は、先に稼働中のH3 StudioをそのPowerShellで`Ctrl+C`して終了し、新しいPowerShellで次のように起動します。異なるattention backendの既存serverが動いている場合、起動スクリプトは黙って再利用せず明示的に停止を求めます。
+SageAttentionを使わずPyTorch attentionで再現・切り分ける場合は、先に稼働中のNIKU H STUDIOをそのPowerShellで`Ctrl+C`して終了し、新しいPowerShellで次のように起動します。異なるattention backendの既存serverが動いている場合、起動スクリプトは黙って再利用せず明示的に停止を求めます。
 
 ```powershell
 $env:H3_ATTENTION_BACKEND = 'pytorch'
 .\Start-H3-WebUI.cmd
 ```
 
-環境変数を指定しない通常起動はSageAttentionです。SageAttention wheelの導入自体を避けて初回構築する場合は、同じ環境変数を設定してから`Setup-H3-Studio.cmd`を実行してください。PyTorch構成では第三者SageAttention wheelとtriton-windowsを取得しません。現行ブラウザUIで選べる最小の横16:9設定は、Text、Preview `672×384`、約5秒（124 frames）、Draft 8、EasyCache OFFです。過去のengine-only `320×192`試験値は動作回帰の記録であり、現行UIの解像度候補ではありません。
+環境変数を指定しない通常起動はSageAttentionです。SageAttention wheelの導入自体を避けて初回構築する場合は、同じ環境変数を設定してから`Setup-H3-Studio.cmd`を実行してください。PyTorch構成では第三者SageAttention wheelとtriton-windowsを取得しません。現行ブラウザUIで選べる最小の横16:9設定は、Text、Preview `672×384`、約5秒（124 frames）、Draft 8です（DraftではEasyCacheの選択にかかわらず自動的に高速化なし）。通常のStandard／Highは`community`（おすすめ：控えめ）が初期値です。過去のengine-only `320×192`試験値は動作回帰の記録であり、現行UIの解像度候補ではありません。
 
 ### Legacy Diffusers検証資料について
 
@@ -277,7 +277,7 @@ $env:H3_ATTENTION_BACKEND = 'pytorch'
 
 ## 5090向け方式
 
-現在の経路は、Comfy-Orgが用意したpruned int8 Transformer（用途別に各約19.53GiB）とNVFP4/AWQ Qwen（約14.61GiB）をComfyUI native H3 nodesで読みます。起動時にBF16の33B TransformerとQwenを丸ごと構築してから量子化する旧経路ではありません。VRAM/RAM配置は固定ComfyUIのmodel managementへ任せ、実動画で検証したSageAttentionを標準使用します。EasyCacheは実測上の総時間短縮がなかったため初期値OFFです。
+現在の経路は、Comfy-Orgが用意したpruned int8 Transformer（用途別に各約19.53GiB）とNVFP4/AWQ Qwen（約14.61GiB）をComfyUI native H3 nodesで読みます。起動時にBF16の33B TransformerとQwenを丸ごと構築してから量子化する旧経路ではありません。VRAM/RAM配置は固定ComfyUIのmodel managementへ任せ、実動画で検証したSageAttentionを標準使用します。EasyCacheは通常生成では`community`（おすすめ：控えめ）を初期値とし、`off`は品質比較用に残しています。12 steps未満では自動的に高速化なしになります。
 
 ### Legacy Diffusers検証結果
 

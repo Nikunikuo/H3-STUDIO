@@ -91,7 +91,7 @@ def validate_resolution_catalog() -> None:
                 MIN_CANVAS_EDGE <= preset.width <= MAX_CANVAS_EDGE
                 and MIN_CANVAS_EDGE <= preset.height <= MAX_CANVAS_EDGE
             ):
-                raise ValueError(f"{aspect_ratio}/{tier} is outside the H3 Studio canvas")
+                raise ValueError(f"{aspect_ratio}/{tier} is outside the NIKU H STUDIO canvas")
 
 
 def resolution_catalog() -> dict[str, object]:

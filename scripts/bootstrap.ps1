@@ -10,7 +10,7 @@ $Root = Split-Path -Parent $PSScriptRoot
 $LicenseUrl = "https://huggingface.co/MiniMaxAI/MiniMax-H3/blob/af0fe5abe6fd50d632b65a82fef321c4c5c1f249/LICENSE"
 
 Write-Host ""
-Write-Host "H3 Studio first-time setup" -ForegroundColor Cyan
+Write-Host "NIKU H STUDIO first-time setup" -ForegroundColor Cyan
 Write-Host "Project: $Root"
 Write-Host ""
 Write-Warning "MiniMax H3 weights are NOT included in this Git repository."
@@ -43,7 +43,7 @@ $PythonExe = Resolve-H3Python312 -Requested $PythonExe
 
 & (Join-Path $PSScriptRoot "setup.ps1") -PythonExe $PythonExe
 if ($LASTEXITCODE -ne 0) {
-    throw "H3 Studio Web UI setup failed."
+    throw "NIKU H STUDIO Web UI setup failed."
 }
 
 $setupComfyArguments = @{
@@ -52,9 +52,9 @@ $setupComfyArguments = @{
 }
 & (Join-Path $PSScriptRoot "setup_comfy.ps1") @setupComfyArguments
 if ($LASTEXITCODE -ne 0) {
-    throw "H3 Studio ComfyUI setup failed. It is safe to rerun Setup-H3-Studio.cmd."
+    throw "NIKU H STUDIO ComfyUI setup failed. It is safe to rerun Setup-H3-Studio.cmd."
 }
 
 Write-Host ""
-Write-Host "H3 Studio setup completed successfully." -ForegroundColor Green
+Write-Host "NIKU H STUDIO setup completed successfully." -ForegroundColor Green
 Write-Host "For normal use, double-click Start-H3-WebUI.cmd."

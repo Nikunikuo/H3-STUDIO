@@ -1325,7 +1325,7 @@ class JobManager:
         return execution_request_path
 
     def _prepare_effective_prompt(self, job_id: str, request_path: Path) -> Path | None:
-        """Prepare a current H3 Studio request for native-clean execution.
+        """Prepare a current NIKU H STUDIO request for native-clean execution.
 
         Public requests have exactly two prompt paths: community runs the
         pinned local Qwen planner, while raw_en validates and preserves an
@@ -1361,7 +1361,7 @@ class JobManager:
                 processing_public,
                 code="LEGACY_PROMPT_MODE_REMOVED",
                 detail=(
-                    "このjobが指定する旧プロンプト実装は現行H3 Studioから撤去されています。"
+                    "このjobが指定する旧プロンプト実装は現行NIKU H STUDIOから撤去されています。"
                     "communityまたはraw_enで新しく生成してください。"
                 ),
                 started=started,
