@@ -12,7 +12,7 @@
 - 2026-08-04再確認時の公式head: `5d9b308a59ab12e67147f191e184baf704185bd1`。モデル取得は初回公開revisionへ固定し、更新されたPrompting Guidanceはraw prompt作成の参照に使用
 - ライセンス: MiniMax H3 Community License Agreement（日本は適用地域、EU／英国／韓国／米国は除外）
 - 対象variant: FL2VA＋Ref2VA（Omni）
-- 通常生成方式: H3 Studio custom UI＋private ComfyUI native H3 backend。各requestでJobManagerが動的loopback portへfresh childを起動し、`--cache-none`で前jobのmodel stateを持ち越さない。Web UI→worker／worker→ComfyUIの2段をWindows Job Objectへ所属させ、親が先にexitしても`KILL_ON_JOB_CLOSE`で子孫をOS回収。固定8188番では常駐させない
+- 通常生成方式: NIKU H STUDIO custom UI＋private ComfyUI native H3 backend。各requestでJobManagerが動的loopback portへfresh childを起動し、`--cache-none`で前jobのmodel stateを持ち越さない。Web UI→worker／worker→ComfyUIの2段をWindows Job Objectへ所属させ、親が先にexitしても`KILL_ON_JOB_CLOSE`で子孫をOS回収。固定8188番では常駐させない
 - 通常プロンプト方式: 公開ローカル成功例を実行形の基準、公式Base／Full-Reference guideを意味・参照・時系列制約の基準にするcommunity plannerを既定化。日本語自然文を別processの`Qwen3-4B-Instruct-2507`でstrict JSON planへ意味展開し、コード側が公開例型の英語`Style / Reference material / Scene / Shot / Audio`ブロックへ決定論的にrenderする。参照タグ、時刻、数値、Seed、解像度、audio policy、台詞原文をコードで保持・検証し、実際の日本語台詞だけを普通の二重引用符内へ1回戻す。検証済みpromptはcustom tokenizer shimなしの`native_clean` ComfyUI workflowへそのまま渡し、planner processはH3起動前に終了。元入力と実効英語promptを`request.json`／`execution_request.json`／`prompt_processing/`へ監査保存
 - ComfyUI SHA: `14b05228cef127ce529bc0c08660770d4af3e9a8`
 - workflow templates参照元SHA: `7653f1cdef1d92394b6ef9946018c0a8aa4136b8`（設計の出典。通常setupでは未使用のcheckoutを作らない）
@@ -27,13 +27,13 @@
 - ComfyUIモデル検証: ローカルSHA-256／byte数が固定HF revisionのLFS SHA-256／sizeと全件一致
 - ComfyUI model lock: `comfy_models.lock.json`
 - 必須prompt planner: `Qwen/Qwen3-4B-Instruct-2507` revision `cdbee75f17c01a7cc42f958dc650907174af0554`。実行最小9ファイル8,056,459,158 bytesを`models/prompt_planner/Qwen3-4B-Instruct-2507`へ配置し、`prompt_planner.lock.json`のサイズ／SHA-256へ全件一致。Apache-2.0、追加クリック同意なし。offline AutoConfig／fast Tokenizer／chat templateとCPU BF16全重みロードを確認し、4,022,468,096 parametersを検証
-- ComfyUI起動前検査: `setup_comfy.ps1 -VerifyOnly -SkipModelHash`成功（固定ComfyUI checkout、CUDA、torchao、32kHz audio resample、SageAttention kernel、H3 5ファイル／63,440,965,087 bytes、Qwen planner 9ファイル／8,056,459,158 bytes、offline config／tokenizer、H3 Studio管理のplanner来歴marker）。通常起動は約17.65秒のfast probeを実行し、Qwen全重みCPU loadと完全model SHA再検査は初回setupまたは明示検証時だけ
+- ComfyUI起動前検査: `setup_comfy.ps1 -VerifyOnly -SkipModelHash`成功（固定ComfyUI checkout、CUDA、torchao、32kHz audio resample、SageAttention kernel、H3 5ファイル／63,440,965,087 bytes、Qwen planner 9ファイル／8,056,459,158 bytes、offline config／tokenizer、NIKU H STUDIO管理のplanner来歴marker）。通常起動は約17.65秒のfast probeを実行し、Qwen全重みCPU loadと完全model SHA再検査は初回setupまたは明示検証時だけ
 - ComfyUI FL2VA: `minimax_h3_fl2va_pruned_int8_convrot.safetensors`、20,970,379,616 bytes、SHA-256 `e889202c41dafb67b10d67b97f0d8541508036a6090af23425a5c2615d03c47a`
 - ComfyUI Ref2VA: `minimax_h3_ref2va_pruned_int8_convrot.safetensors`、20,970,379,616 bytes、SHA-256 `9255f52b6677845ad238f20dfaafa94727053694127ab7f255c048f0f9365779`
 - ComfyUI Qwen: `qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors`、15,687,142,551 bytes、SHA-256 `35a88d51044231fe332301d7a62aa81e3f2cba62febeb446e2c1e3e0ef76f2c6`
 - ComfyUI audio VAE: `minimax_h3_audio_vae_fp32.safetensors`、605,254,808 bytes、SHA-256 `8e505d95dd1561d47abd43d4238fd40d9bb1ae9e147ed0a4cba778d76ae4db48`
 - ComfyUI video VAE: `minimax_h3_video_vae_fp16.safetensors`、5,207,808,496 bytes、SHA-256 `7c1f131492e7eddacaac9069a61b81bdd39de5cc96561e677c5eab1cdce5e522`
-- EasyCache: native node。初期値OFF。公開例presetはreuse threshold 0.20／sampling 15%～95%、比較用の保守的0.20／高速0.30は20%～90%、12 steps未満は自動OFF。Sage定常OFF 39.01秒に対し別条件の0.20併用39.67秒で、8/20 skip・表示1.67×でもPrompt総時間は同等。近似による映像・音声差もあり、任意選択としてUIへ残す
+- EasyCache: native node。通常生成の初期値は`community`（おすすめ：控えめ）。公開例presetはreuse threshold 0.20／sampling 15%～95%、`off`は品質比較用、`conservative`（より慎重）と`balanced`（速度優先）は任意選択、12 steps未満は自動OFF。Sage定常OFF 39.01秒に対し別条件の0.20併用39.67秒で、8/20 skip・表示1.67×でもPrompt総時間は同等。近似による映像・音声差もあり、通常はcommunityを使いつつ、品質確認時はoffと比較する
 - SageAttention: `2.2.0+cu130torch2.10.0andhigher.post6`＋`triton-windows 3.7.1.post27`を標準ON。固定Windows wheel 16,656,067 bytes／SHA-256 `1635283f5c01ec3cda58a784d0d7eabbcaffaf9511d1b263db4750e1ed7958bb`をsetupが取得・検証。小型kernel smokeはfinite／repeat equal、SDPA比cosine 0.999344。fallbackは起動前に`$env:H3_ATTENTION_BACKEND='pytorch'`。fallback時はSage import／version／kernel検査を意図的にskipし、PyTorch経路の起動前検査成功を実機確認済み
 - Browser E2E: `320×192`／124 frames／Draft 8／EasyCache OFF、初回PyTorchを含むtotal 86.031秒。5.167秒、H.264 124 frames＋AAC 331,776 total samples（165,888／channel）／32kHz stereoを全decode
 - Sage標準browser E2E: fresh private childでtotal 44.422秒（Comfy prompt 36.51秒、起動6.813秒、denoise 19秒、Video VAE 6.10秒、全decode検証0.110秒）。`backend=comfy`／`attention_backend=sage`をjobへ保存し、UIにも表示
@@ -69,27 +69,27 @@
 - スモーク所要時間: 221.62秒（denoise 1 forwardは5.14秒）
 - スモーク初回試行: 重みロード前に停止。PR文書の`low_cpu_mem_usage=False`を同SHAの量子化ローダーが拒否する不整合を確認。サポートされる`True`へ修正し、再試行は成功
 
-## H3 Studio
+## NIKU H STUDIO
 
-- H3 Studio Web UI: `http://127.0.0.1:7863` localhost限定、Text／Image／Frames／Omni、順番付き参照、進捗リング、キャンセル、履歴、再生、ダウンロード、出力フォルダ表示
-- H3 Studio Web境界: numeric loopback以外のHost、cross-site `Sec-Fetch-Site`、専用`X-H3-Studio-Request`ヘッダーのない更新、Hostと一致しないOriginを拒否。CSP／no-store／frame拒否ヘッダーも付与し、DNS rebinding・cross-site GPU job投入を防止
-- H3 Studio upload境界: `/api/jobs`の宣言済みaggregate bodyは8GiB、個別素材は2GiB上限。Omniの12件／画像9／動画3／音声3制限と非Omni参照拒否をジョブディレクトリ作成前に検査
-- H3 Studio process境界: Windows Job Object `KILL_ON_JOB_CLOSE`を2段で使用。親先行exit後の孤児回収、終了冪等性、ProcessJob作成失敗時のspawn禁止、cancel／runner競合で次engineを誤停止しないことを実機・unit testで確認。private Comfy health後はlistener PIDがspawn tree内であることも検査
-- H3 Studio参照UI: 素材タイプ別の公式Picture／Video／Audioタグ自動採番、並べ替え再採番、クリック挿入、参照動画の埋め込み音声は通常経路では使用しない旨、およびstandalone Audioポリシーを表示
-- H3 Studio参照精度UI: Omni専用に`高速（match）`／`高精度（max）`を選択。matchは生成canvas相当の総画素へdownscale-only、maxはupscaleせず短辺2048上限。選択値をrequest／jobへ保存し、再利用時に復元
-- H3 Studio prompt processing: 画面からの新規jobは既定の`community` plannerで、日本語自然文を固定Qwen3-4B text-only workerへ渡し、strict schemaを経て公開例型の英語`Style / Reference material / Scene / Shot / Audio`ブロックへrenderする。台詞は事前退避し、翻訳せず普通の二重引用符へ1回だけ復元。参照集合／数値／時刻／audio policy／台詞完全一致／日本語残留範囲をコードで検証し、失敗時は生成前に停止する。H3には`native_clean` profileで実効promptをbyte単位のまま渡し、custom tokenizer shimを使わない。既に整えた英語を無変更で渡す公開`raw_en`と合わせ、入力方式はこの2つだけ
-- H3 Studio prompt監査: 元`request.json`はbyte単位で不変、派生`execution_request.json`、`prompt_processing/final_prompt.txt`、`report.json`をatomic保存。入力／出力SHA-256、planner revision、cache、検証診断、自動調整を記録し、削除済みcompiler用artifactは新規jobへ作らない
-- H3 Studio詳細UI: compiler／入力ガード情報は通常入力画面へ出さず、完了／失敗／cancel後の「生成の詳細を見る」に実効プロンプト、自動調整、参考情報、技術情報を欠損安全に表示し、内容は`textContent`だけで描画
-- H3 Studio解像度UI: 固定pixel一覧を縦横比（16:9／9:16／1:1／4:3／3:4）×解像度段階（Preview／SD 480p相当／HD 720p相当／Native 768p）の2軸へ変更。実width／heightはserver共通catalogから取得し、H3の32px alignmentを維持。9:16×HDの送信値`736×1312`、軽量Previewは縦横比を維持して9:16なら`384×672`、旧`640×384` jobは16:9×Preview`672×384`への最寄り復元を実ブラウザ／DOM／FormDataで確認
-- H3 Studio進捗UI: Qwen解析／参照VAE／レイアウト／denoise／映像復元／音声復元／MP4化を分離。実イベント間だけ次段階未満の上限付き推定を表示
-- H3 Studioプロンプト再利用: 成功・失敗・キャンセルを含む永続ジョブ履歴から最大20件の重複なしプロンプトと音響指示を復元
-- H3 Studio音響UI: 通常はメインプロンプトの各Cutへ台詞・声質・環境音・効果音を直接記述。音声設定は折り畳み式の任意詳細へ下げ、音の主役、BGM、台詞上書き、全体音響補足、出力音量だけを保持。実台詞だけを原文の普通の二重引用符へ局所復元し、声質・話者・停止は引用符外の英語、環境音・効果音はpositiveな具体音としてrender。台詞なし／指定台詞だけ／自動のaudio policyを明示し、曖昧な発話cueや繰り返し禁止文を生成promptへ入れない。最終出力音量はComfyUI core `AudioAdjustVolume`のraw dBゲインとして適用し、normalization／clipping preventionは行わない。+dBは元peak次第でclipし得る。各設定を永続ジョブ履歴へ保存・復元
-- H3 Studio負荷UI: `960×544`・約5秒・Draftを基準に出力側の相対負荷を表示。Omni参照は倍率外の追加負荷として明記し、軽量プレビュー設定ボタンを提供
-- H3 Studio workflow profile: `native_clean`のみ。ComfyUI native H3 nodesだけを許可し、custom node、`<d>` marker、tokenizer改変を読み込まない
-- H3 Studio scheduler: 非表示`auto` policyでFL2VA（Text／Image／Frames）とRef2VA（Omni）の両方を、公開ComfyUI workflowの実設定と同じ`simple`へ解決。事前解決値とworkflow metadataの一致をworkerで再検証し、requested／effective値をjob詳細へ保存。同じ2画像・同じseed・同じ実効promptの320×192／8 steps実動画A/Bで、`normal`は明瞭な未denoise色ノイズが残り、`simple`は人物・衣装・背景を正常復元。20 steps音声A/BでもRef2VA `normal`が指定台詞から逸脱したため、`normal`の自動選択を廃止
-- H3 Studio参照動画音声: raw経路では埋め込み音声を偶発的にコピーしないよう`ignore`固定。公式Ref prompt guideは、声色・リズム・感情・話し方だけを参照する場合、元音声の台詞を出力へ持ち込まないよう明示している。一方、公開ComfyUI nodeはspeaker／timbre embeddingを抽出せず、入力波形全体をAudio VAE latentとして渡す。この公開経路ではvoice-onlyを物理的に強制できないため、H3 Studioは確率的なprompt誘導として扱う。明示台詞と併用する既定`dialogue_priority`ではAudioを実行用`references`と実効promptから外し、元添付と除外理由は監査保存。`full_content`を明示選択した場合だけ全波形を渡し、元発話・間・場面が指定を上書きし得る診断を保存。動画音声を個別にspeaker／timbreだけへ分離する機能はない
+- NIKU H STUDIO Web UI: `http://127.0.0.1:7863` localhost限定、Text／Image／Frames／Omni、順番付き参照、進捗リング、キャンセル、履歴、再生、ダウンロード、出力フォルダ表示
+- NIKU H STUDIO Web境界: numeric loopback以外のHost、cross-site `Sec-Fetch-Site`、専用`X-H3-Studio-Request`ヘッダーのない更新、Hostと一致しないOriginを拒否。CSP／no-store／frame拒否ヘッダーも付与し、DNS rebinding・cross-site GPU job投入を防止
+- NIKU H STUDIO upload境界: `/api/jobs`の宣言済みaggregate bodyは8GiB、個別素材は2GiB上限。Omniの12件／画像9／動画3／音声3制限と非Omni参照拒否をジョブディレクトリ作成前に検査
+- NIKU H STUDIO process境界: Windows Job Object `KILL_ON_JOB_CLOSE`を2段で使用。親先行exit後の孤児回収、終了冪等性、ProcessJob作成失敗時のspawn禁止、cancel／runner競合で次engineを誤停止しないことを実機・unit testで確認。private Comfy health後はlistener PIDがspawn tree内であることも検査
+- NIKU H STUDIO参照UI: 素材タイプ別の公式Picture／Video／Audioタグ自動採番、並べ替え再採番、クリック挿入、参照動画の埋め込み音声は通常経路では使用しない旨、およびstandalone Audioポリシーを表示
+- NIKU H STUDIO参照精度UI: Omni専用に`高速（match）`／`高精度（max）`を選択。matchは生成canvas相当の総画素へdownscale-only、maxはupscaleせず短辺2048上限。選択値をrequest／jobへ保存し、再利用時に復元
+- NIKU H STUDIO prompt processing: 画面からの新規jobは既定の`community` plannerで、日本語自然文を固定Qwen3-4B text-only workerへ渡し、strict schemaを経て公開例型の英語`Style / Reference material / Scene / Shot / Audio`ブロックへrenderする。台詞は事前退避し、翻訳せず普通の二重引用符へ1回だけ復元。参照集合／数値／時刻／audio policy／台詞完全一致／日本語残留範囲をコードで検証し、失敗時は生成前に停止する。H3には`native_clean` profileで実効promptをbyte単位のまま渡し、custom tokenizer shimを使わない。既に整えた英語を無変更で渡す公開`raw_en`と合わせ、入力方式はこの2つだけ
+- NIKU H STUDIO prompt監査: 元`request.json`はbyte単位で不変、派生`execution_request.json`、`prompt_processing/final_prompt.txt`、`report.json`をatomic保存。入力／出力SHA-256、planner revision、cache、検証診断、自動調整を記録し、削除済みcompiler用artifactは新規jobへ作らない
+- NIKU H STUDIO詳細UI: compiler／入力ガード情報は通常入力画面へ出さず、完了／失敗／cancel後の「生成の詳細を見る」に実効プロンプト、自動調整、参考情報、技術情報を欠損安全に表示し、内容は`textContent`だけで描画
+- NIKU H STUDIO解像度UI: 固定pixel一覧を縦横比（16:9／9:16／1:1／4:3／3:4）×解像度段階（Preview／SD 480p相当／HD 720p相当／Native 768p）の2軸へ変更。実width／heightはserver共通catalogから取得し、H3の32px alignmentを維持。9:16×HDの送信値`736×1312`、軽量Previewは縦横比を維持して9:16なら`384×672`、旧`640×384` jobは16:9×Preview`672×384`への最寄り復元を実ブラウザ／DOM／FormDataで確認
+- NIKU H STUDIO進捗UI: Qwen解析／参照VAE／レイアウト／denoise／映像復元／音声復元／MP4化を分離。実イベント間だけ次段階未満の上限付き推定を表示
+- NIKU H STUDIOプロンプト再利用: 成功・失敗・キャンセルを含む永続ジョブ履歴から最大20件の重複なしプロンプトと音響指示を復元
+- NIKU H STUDIO音響UI: 通常はメインプロンプトの各Cutへ台詞・声質・環境音・効果音を直接記述。音声設定は折り畳み式の任意詳細へ下げ、音の主役、BGM、台詞上書き、全体音響補足、出力音量だけを保持。実台詞だけを原文の普通の二重引用符へ局所復元し、声質・話者・停止は引用符外の英語、環境音・効果音はpositiveな具体音としてrender。台詞なし／指定台詞だけ／自動のaudio policyを明示し、曖昧な発話cueや繰り返し禁止文を生成promptへ入れない。最終出力音量はComfyUI core `AudioAdjustVolume`のraw dBゲインとして適用し、normalization／clipping preventionは行わない。+dBは元peak次第でclipし得る。各設定を永続ジョブ履歴へ保存・復元
+- NIKU H STUDIO負荷UI: `960×544`・約5秒・Draftを基準に出力側の相対負荷を表示。Omni参照は倍率外の追加負荷として明記し、軽量プレビュー設定ボタンを提供
+- NIKU H STUDIO workflow profile: `native_clean`のみ。ComfyUI native H3 nodesだけを許可し、custom node、`<d>` marker、tokenizer改変を読み込まない
+- NIKU H STUDIO scheduler: 非表示`auto` policyでFL2VA（Text／Image／Frames）とRef2VA（Omni）の両方を、公開ComfyUI workflowの実設定と同じ`simple`へ解決。事前解決値とworkflow metadataの一致をworkerで再検証し、requested／effective値をjob詳細へ保存。同じ2画像・同じseed・同じ実効promptの320×192／8 steps実動画A/Bで、`normal`は明瞭な未denoise色ノイズが残り、`simple`は人物・衣装・背景を正常復元。20 steps音声A/BでもRef2VA `normal`が指定台詞から逸脱したため、`normal`の自動選択を廃止
+- NIKU H STUDIO参照動画音声: raw経路では埋め込み音声を偶発的にコピーしないよう`ignore`固定。公式Ref prompt guideは、声色・リズム・感情・話し方だけを参照する場合、元音声の台詞を出力へ持ち込まないよう明示している。一方、公開ComfyUI nodeはspeaker／timbre embeddingを抽出せず、入力波形全体をAudio VAE latentとして渡す。この公開経路ではvoice-onlyを物理的に強制できないため、NIKU H STUDIOは確率的なprompt誘導として扱う。明示台詞と併用する既定`dialogue_priority`ではAudioを実行用`references`と実効promptから外し、元添付と除外理由は監査保存。`full_content`を明示選択した場合だけ全波形を渡し、元発話・間・場面が指定を上書きし得る診断を保存。動画音声を個別にspeaker／timbreだけへ分離する機能はない
 - 履歴テスト基準: 旧270件中269件成功（Windows directory symlink向け1 skip）は、削除済み`direct`／`official_en`／Context-IR経路の移行前基準。community planner／`native_clean`移行後、cleanup前の最終件数はRepository節へ記録
-- 音声仕様確認: 公開H3入力／ComfyUI H3 nodeの生成条件には、独立したvoice strength、audio guidance、生成音量パラメータはない。映像と32kHzステレオ音声を共有Transformerで共同生成し、H3 Studioの最終出力音量は共同生成後の波形へ適用するpost-processのraw dBゲイン
+- 音声仕様確認: 公開H3入力／ComfyUI H3 nodeの生成条件には、独立したvoice strength、audio guidance、生成音量パラメータはない。映像と32kHzステレオ音声を共有Transformerで共同生成し、NIKU H STUDIOの最終出力音量は共同生成後の波形へ適用するpost-processのraw dBゲイン
 - 速度差確認: Diffusers文書は960×544を1344×768より約2.3倍／step高速と記載。公式初回OSSはfull attentionのみ、sparse attentionは今後公開予定。公式SGLangのconsumer最速検証は2×RTX 5090であり、単一5090 CPU offloadとは非同条件
 
 ## Historical: removed Legacy Diffusers measurements

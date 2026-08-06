@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="dark" />
     <meta name="description" content="MiniMax H3をローカルで使うための動画・音声生成スタジオ" />
-    <title>H3 Studio — Local Video Generation</title>
+    <title>NIKU H STUDIO — Local Video Generation</title>
     <link rel="stylesheet" href="/assets/app.css" />
     <script src="/assets/app.js" defer></script>
   </head>
@@ -14,10 +14,10 @@
     <div class="ambient ambient-two"></div>
 
     <header class="topbar">
-      <a class="brand" href="/" aria-label="H3 Studio ホーム">
+      <a class="brand" href="/" aria-label="NIKU H STUDIO ホーム">
         <span class="brand-mark">H3</span>
         <span>
-          <strong>H3 Studio</strong>
+          <strong>NIKU H STUDIO</strong>
           <small>POWERED BY MINIMAX H3</small>
         </span>
       </a>
@@ -166,7 +166,7 @@
             </select>
             <button id="reuse-prompt" type="button" disabled>プロンプトを再利用</button>
           </div>
-          <p class="helper" id="prompt-help">映像、カメラ、動作、声質、台詞、環境音、効果音をCutごとにまとめて書けます。台詞は「実際に話す言葉」と分かるように鉤括弧で囲み、「と言う」「と話す」まで書いてください。H3 Studioが発話制御だけを公式形式へ整え、動作や効果音は同じCutに残します。順序を強く効かせたい大きな動作・台詞・音は、同じCut内で改行して分けると安定します。</p>
+          <p class="helper" id="prompt-help">映像、カメラ、動作、声質、台詞、環境音、効果音をCutごとにまとめて書けます。台詞は「実際に話す言葉」と分かるように鉤括弧で囲み、「と言う」「と話す」まで書いてください。NIKU H STUDIOが発話制御だけを公式形式へ整え、動作や効果音は同じCutに残します。順序を強く効かせたい大きな動作・台詞・音は、同じCut内で改行して分けると安定します。</p>
         </div>
 
         <details class="form-section sound-section audio-advanced" id="sound-section">
@@ -273,12 +273,15 @@
             <label class="field acceleration-field">
               <span>高速化</span>
               <select id="acceleration" aria-describedby="acceleration-note">
-                <option value="off" selected>品質優先 · OFF</option>
-                <option value="community">公開例 · EasyCache 0.20</option>
-                <option value="conservative">保守的 · EasyCache 0.20</option>
-                <option value="balanced">高速 · EasyCache 0.30</option>
+                <option value="off">高速化なし（比較用）</option>
+                <option value="community" selected>おすすめ：控えめ（通常）</option>
+                <option value="conservative">より慎重（品質優先）</option>
+                <option value="balanced">速度優先（品質を確認）</option>
               </select>
               <small id="acceleration-note">
+                通常は「おすすめ：控えめ（通常）」を選んでください。品質比較は「高速化なし」、速度優先の試作は「速度優先」。Draft（12 steps未満）では自動的に高速化なしになります。
+              </small>
+              <small id="acceleration-legacy-note" hidden aria-hidden="true">
                 公開例はthreshold 0.20・sampling 15%～95%。EasyCacheは近似処理なので、Draft（steps&lt;12）では自動OFF。映像と音声がわずかに変わる可能性があります。
               </small>
             </label>
@@ -409,7 +412,7 @@
               <details class="job-detail-group hidden" id="detail-adjustments-group">
                 <summary>
                   <span>自動調整</span>
-                  <small>H3 Studioが生成前に整えた内容</small>
+                  <small>NIKU H STUDIOが生成前に整えた内容</small>
                 </summary>
                 <pre class="job-detail-content" id="detail-adjustments"></pre>
               </details>

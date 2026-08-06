@@ -16,6 +16,7 @@ from webui.comfy_workflow import (
     CLIP_NODE_ID,
     COMFYUI_COMMIT,
     CONDITIONING_NODE_ID,
+    DEFAULT_EASYCACHE_PRESET,
     EASYCACHE_NODE_ID,
     FL2VA_MODEL,
     GUIDER_NODE_ID,
@@ -53,6 +54,8 @@ class ComfyWorkflowTests(unittest.TestCase):
         workflow = build("t2v")
         graph = workflow["prompt"]
         self.assert_json_serializable(workflow)
+        self.assertEqual(workflow["metadata"]["requested_easycache"], DEFAULT_EASYCACHE_PRESET)
+        self.assertEqual(workflow["metadata"]["effective_easycache"], DEFAULT_EASYCACHE_PRESET)
         self.assertEqual(workflow["metadata"]["comfyui_commit"], COMFYUI_COMMIT)
         self.assertEqual(workflow["metadata"]["save_video_node_id"], SAVE_VIDEO_NODE_ID)
         self.assertEqual(graph[UNET_NODE_ID]["inputs"]["unet_name"], FL2VA_MODEL)
@@ -186,7 +189,7 @@ class ComfyWorkflowTests(unittest.TestCase):
         self.assertEqual(graph[EASYCACHE_NODE_ID]["inputs"]["start_percent"], 0.20)
         self.assertEqual(graph[EASYCACHE_NODE_ID]["inputs"]["end_percent"], 0.90)
 
-    def test_community_cache_matches_published_example_and_is_opt_in(self):
+    def test_community_cache_matches_published_example_and_is_default(self):
         baseline = build(
             "t2v",
             workflow_profile="native_clean",
@@ -196,8 +199,13 @@ class ComfyWorkflowTests(unittest.TestCase):
             steps=20,
         )
         self.assertEqual(baseline["metadata"]["workflow_profile"], "native_clean")
-        self.assertEqual(baseline["metadata"]["effective_easycache"], "off")
-        self.assertNotIn(EASYCACHE_NODE_ID, baseline["prompt"])
+        self.assertEqual(baseline["metadata"]["requested_easycache"], DEFAULT_EASYCACHE_PRESET)
+        self.assertEqual(baseline["metadata"]["effective_easycache"], DEFAULT_EASYCACHE_PRESET)
+        self.assertIn(EASYCACHE_NODE_ID, baseline["prompt"])
+        default_cache = baseline["prompt"][EASYCACHE_NODE_ID]["inputs"]
+        self.assertEqual(default_cache["reuse_threshold"], 0.20)
+        self.assertEqual(default_cache["start_percent"], 0.15)
+        self.assertEqual(default_cache["end_percent"], 0.95)
 
         community = build(
             "t2v",

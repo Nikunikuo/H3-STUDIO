@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .comfy_workflow import (
     AUDIO_VAE_MODEL as COMFY_AUDIO_VAE_FILENAME,
+    DEFAULT_EASYCACHE_PRESET,
     EASYCACHE_PRESETS,
     FL2VA_MODEL as COMFY_FL2VA_FILENAME,
     MIN_EASYCACHE_STEPS,
@@ -138,7 +139,7 @@ async def lifespan(_: FastAPI):
     manager.stop()
 
 
-app = FastAPI(title="H3 Studio", docs_url=None, redoc_url=None, lifespan=lifespan)
+app = FastAPI(title="NIKU H STUDIO", docs_url=None, redoc_url=None, lifespan=lifespan)
 app.mount("/assets", StaticFiles(directory=STATIC_DIR), name="assets")
 
 
@@ -156,7 +157,7 @@ async def protect_local_browser_boundary(request: Request, call_next):  # noqa: 
 
     host = request.headers.get("host", "")
     if not _valid_local_host(host):
-        return PlainTextResponse("H3 Studio only accepts numeric loopback Host headers.", status_code=421)
+        return PlainTextResponse("NIKU H STUDIO only accepts numeric loopback Host headers.", status_code=421)
 
     fetch_site = request.headers.get("sec-fetch-site", "").lower()
     if fetch_site not in {"", "none", "same-origin"}:
@@ -164,7 +165,7 @@ async def protect_local_browser_boundary(request: Request, call_next):  # noqa: 
 
     if request.method not in {"GET", "HEAD", "OPTIONS"}:
         if request.headers.get(LOCAL_MUTATION_HEADER) != LOCAL_MUTATION_VALUE:
-            return PlainTextResponse("Missing H3 Studio local request header.", status_code=403)
+            return PlainTextResponse("Missing NIKU H STUDIO local request header.", status_code=403)
         origin = request.headers.get("origin")
         if origin is not None and origin.rstrip("/").lower() != f"http://{host}".lower():
             return PlainTextResponse("Cross-origin mutations are not allowed.", status_code=403)
@@ -179,7 +180,7 @@ async def protect_local_browser_boundary(request: Request, call_next):  # noqa: 
                     return PlainTextResponse("Invalid Content-Length.", status_code=400)
                 if declared_bytes > MAX_REQUEST_BYTES:
                     return PlainTextResponse(
-                        "The complete H3 Studio request exceeds the 8 GiB local upload limit.",
+                        "The complete NIKU H STUDIO request exceeds the 8 GiB local upload limit.",
                         status_code=413,
                     )
 
@@ -217,7 +218,7 @@ def capabilities() -> dict[str, Any]:
         "acceleration": {
             "supported": True,
             "presets": list(EASYCACHE_PRESETS),
-            "default": "off",
+            "default": DEFAULT_EASYCACHE_PRESET,
             "minimum_steps": MIN_EASYCACHE_STEPS,
         },
         "attention": {
@@ -546,7 +547,7 @@ async def create_job(
     num_frames: Annotated[int, Form()],
     steps: Annotated[int, Form()],
     seed: Annotated[int, Form()],
-    acceleration: Annotated[str, Form()] = "off",
+    acceleration: Annotated[str, Form()] = DEFAULT_EASYCACHE_PRESET,
     ref_image_size: Annotated[str, Form()] = "match",
     prompt_processing_mode: Annotated[str, Form()] = "community",
     standalone_audio_policy: Annotated[str | None, Form()] = None,
@@ -894,7 +895,7 @@ def main() -> None:
     parser.add_argument("--open", action="store_true")
     args = parser.parse_args()
     if args.host not in {"127.0.0.1", "localhost"}:
-        raise SystemExit("安全のためH3 Studioはlocalhostでのみ起動できます。")
+        raise SystemExit("安全のためNIKU H STUDIOはlocalhostでのみ起動できます。")
     if args.open:
         threading.Thread(target=_open_browser_when_ready, args=(args.port,), daemon=True).start()
     uvicorn.run(app, host="127.0.0.1", port=args.port, log_level="info")

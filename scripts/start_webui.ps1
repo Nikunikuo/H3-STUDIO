@@ -16,7 +16,7 @@ if ($DesiredAttentionBackend -notin @("sage", "pytorch")) {
 }
 
 if (-not (Test-Path -LiteralPath $Python)) {
-    throw "H3 Studio is not set up yet. Double-click Setup-H3-Studio.cmd first."
+    throw "NIKU H STUDIO is not set up yet. Double-click Setup-H3-Studio.cmd first."
 }
 
 if (-not (Test-Path -LiteralPath $ComfySetup)) {
@@ -43,19 +43,19 @@ try {
 
 if ($null -ne $ExistingState) {
     if ($ExistingState.capabilities.backend -ne "comfy" -or -not $ExistingState.capabilities.ready) {
-        throw "Port $Port already has an incompatible or incomplete H3 Studio. Stop that process, then launch again."
+        throw "Port $Port already has an incompatible or incomplete NIKU H STUDIO. Stop that process, then launch again."
     }
     $RunningAttentionBackend = [string]$ExistingState.capabilities.attention.backend
     if ($RunningAttentionBackend -ne $DesiredAttentionBackend) {
-        throw "H3 Studio is already running with attention backend '$RunningAttentionBackend', but '$DesiredAttentionBackend' was requested. Stop the existing H3 Studio with Ctrl+C, then launch again."
+        throw "NIKU H STUDIO is already running with attention backend '$RunningAttentionBackend', but '$DesiredAttentionBackend' was requested. Stop the existing NIKU H STUDIO with Ctrl+C, then launch again."
     }
     Start-Process -FilePath $Url
-    Write-Host "H3 Studio is already running: $Url"
+    Write-Host "NIKU H STUDIO is already running: $Url"
     return
 }
 
 try {
-    $Host.UI.RawUI.WindowTitle = "H3 Studio - keep this window open"
+    $Host.UI.RawUI.WindowTitle = "NIKU H STUDIO - keep this window open"
 } catch {
     # Some non-interactive PowerShell hosts do not expose RawUI.
 }

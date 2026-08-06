@@ -374,8 +374,8 @@ class ComfyEngineWorkerTests(unittest.TestCase):
         self.assertEqual(workflow["prompt"]["8"]["inputs"]["scheduler"], "simple")
         self.assertEqual(workflow["prompt"]["7"]["inputs"]["sampler_name"], "res_multistep")
         self.assertEqual(workflow["metadata"]["workflow_profile"], "native_clean")
-        self.assertEqual(workflow["metadata"]["effective_easycache"], "off")
-        self.assertNotIn("2", workflow["prompt"])
+        self.assertEqual(workflow["metadata"]["effective_easycache"], "community")
+        self.assertEqual(workflow["prompt"]["2"]["class_type"], "EasyCache")
 
     def test_effective_prompt_must_already_be_a_string(self):
         request = {

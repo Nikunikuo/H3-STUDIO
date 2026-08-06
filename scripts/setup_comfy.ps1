@@ -266,7 +266,7 @@ function Test-PromptPlannerProvenance {
 function Write-PromptPlannerProvenance {
     param([Parameter(Mandatory = $true)]$Lock)
 
-    # This marker is H3 Studio-owned provenance, not a Hugging Face cache file.
+    # This marker is NIKU H STUDIO-owned provenance, not a Hugging Face cache file.
     # Call this function only after all nine files passed their pinned SHA-256
     # checks during a normal (non-VerifyOnly) setup invocation.
     $marker = Get-PromptPlannerProvenance -Lock $Lock
@@ -494,7 +494,7 @@ $promptPlannerMissingBytes = [int64]0
 
 if ($promptPlannerInventory.Status -eq "absent") {
     if ($VerifyOnly) {
-        throw "The required Qwen prompt planner is not installed. Rerun Setup-H3-Studio.cmd before starting H3 Studio."
+        throw "The required Qwen prompt planner is not installed. Rerun Setup-H3-Studio.cmd before starting NIKU H STUDIO."
     }
     $promptPlannerMissingBytes = [int64]$promptPlannerLock.verification.total_bytes
 } elseif ($promptPlannerInventory.Status -eq "incomplete") {
@@ -517,7 +517,7 @@ Setup-H3-Studio.cmd. A clean partial download is resumed from the fixed revision
 }
 
 if ($env:OS -ne "Windows_NT") {
-    throw "This pinned H3 Studio setup currently supports 64-bit Windows only."
+    throw "This pinned NIKU H STUDIO setup currently supports 64-bit Windows only."
 }
 
 if ($VerifyOnly) {

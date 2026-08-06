@@ -119,6 +119,34 @@ class PublicDistributionTests(unittest.TestCase):
         self.assertIn("const originalPrompt = firstDetailValue(job.original_prompt, job.prompt);", app)
         self.assertIn("setDetailGroup(ui.detailOriginalGroup", app)
 
+    def test_acceleration_controls_explain_usage_and_default_to_restrained_cache(self) -> None:
+        html = (ROOT / "webui/static/index.html").read_text(encoding="utf-8")
+        app = (ROOT / "webui/static/app.js").read_text(encoding="utf-8")
+        expected_labels = (
+            "高速化なし（比較用）",
+            "おすすめ：控えめ（通常）",
+            "より慎重（品質優先）",
+            "速度優先（品質を確認）",
+        )
+        for label in expected_labels:
+            with self.subTest(label=label):
+                self.assertIn(label, html)
+                self.assertIn(label, app)
+        self.assertIn('<option value="community" selected>', html)
+        self.assertIn('ui.acceleration.value = "community"', app)
+        self.assertIn("Draft（12 steps未満）では自動的に高速化なし", html)
+        self.assertIn("Draft（12 steps未満）では自動的に高速化なし", app)
+        self.assertNotIn("EasyCache 公開例", app)
+        self.assertNotIn("EasyCache 高速", app)
+
+    def test_product_brand_is_niku_h_studio(self) -> None:
+        html = (ROOT / "webui/static/index.html").read_text(encoding="utf-8")
+        server = (ROOT / "webui/server.py").read_text(encoding="utf-8")
+        self.assertIn("<title>NIKU H STUDIO — Local Video Generation</title>", html)
+        self.assertIn("<strong>NIKU H STUDIO</strong>", html)
+        self.assertIn('FastAPI(title="NIKU H STUDIO"', server)
+        self.assertNotIn("<title>H3 Studio", html)
+
     def test_windows_launchers_are_location_independent(self) -> None:
         for relative in ("Setup-H3-Studio.cmd", "Start-H3-WebUI.cmd"):
             with self.subTest(launcher=relative):

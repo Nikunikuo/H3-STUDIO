@@ -23,6 +23,7 @@ from .comfy_client import ComfyClient, ComfyClientError, PromptPoll
 from .comfy_workflow import (
     AUDIO_VAE_MODEL,
     COMFYUI_COMMIT,
+    DEFAULT_EASYCACHE_PRESET,
     DEFAULT_WORKFLOW_PROFILE,
     EASYCACHE_PRESETS,
     FL2VA_MODEL,
@@ -140,7 +141,10 @@ def _load_request(path: Path, root: Path = ROOT) -> dict[str, Any]:
 
 
 def _requested_acceleration(request: Mapping[str, Any]) -> str:
-    requested = request.get("easycache", request.get("acceleration", "off"))
+    requested = request.get(
+        "easycache",
+        request.get("acceleration", DEFAULT_EASYCACHE_PRESET),
+    )
     if not isinstance(requested, str) or requested not in EASYCACHE_PRESETS:
         choices = ", ".join(EASYCACHE_PRESETS)
         raise ValueError(f"acceleration must be one of: {choices}")
@@ -800,7 +804,7 @@ def run(request: dict[str, Any], *, root: Path = ROOT) -> None:
     try:
         job_log.parent.mkdir(parents=True, exist_ok=True)
         with job_log.open("a", encoding="utf-8", errors="replace") as handle:
-            handle.write(f"H3 Studio workflow_profile={profile}\n")
+            handle.write(f"NIKU H STUDIO workflow_profile={profile}\n")
         emit(
             status="running",
             phase="ComfyUIを検証しています",
@@ -1048,7 +1052,7 @@ def run(request: dict[str, Any], *, root: Path = ROOT) -> None:
 
 
 def _emit_failure(exc: Exception, request: Mapping[str, Any] | None = None) -> None:
-    requested = "off"
+    requested = DEFAULT_EASYCACHE_PRESET
     profile = DEFAULT_WORKFLOW_PROFILE
     steps = 0
     scheduler: dict[str, str] | None = None

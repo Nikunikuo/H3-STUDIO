@@ -53,12 +53,12 @@ DEFAULT_SCHEDULER_BY_VARIANT = {
 }
 EASYCACHE_PRESETS: dict[str, tuple[float, float, float] | None] = {
     "off": None,
-    # Values used by the reproducible public MiniMax H3 ComfyUI example.  It
-    # remains opt-in: a clean comparison baseline requests ``off``.
+    # Values used by the reproducible public MiniMax H3 ComfyUI example.
     "community": (0.20, 0.15, 0.95),
     "conservative": (0.20, 0.20, 0.90),
     "balanced": (0.30, 0.20, 0.90),
 }
+DEFAULT_EASYCACHE_PRESET = "community"
 MIN_EASYCACHE_STEPS = 12
 
 
@@ -381,7 +381,7 @@ def build_h3_workflow(
     reference_audio_filenames: Sequence[str] | None = None,
     ref_image_size: str = "match",
     workflow_profile: str = DEFAULT_WORKFLOW_PROFILE,
-    easycache: str = "off",
+    easycache: str = DEFAULT_EASYCACHE_PRESET,
     scheduler: str = "auto",
     embedded_video_audio_policy: str = "ignore",
     embedded_video_audio_indices: Sequence[int] | None = None,
@@ -393,8 +393,10 @@ def build_h3_workflow(
     Omni filenames are names in ComfyUI's input directory, in the exact order
     that their ``<Picture i>``, ``<Video k>``, and ``<Audio j>`` tags use.
 
-    EasyCache is intentionally disabled below 12 sampling steps: its warm-up
-    and non-cache tail leave too few useful steps for a meaningful win there.
+    The restrained ``community`` preset is the default for normal generation;
+    ``off`` remains available as a clean comparison baseline. EasyCache is
+    intentionally disabled below 12 sampling steps: its warm-up and non-cache
+    tail leave too few useful steps for a meaningful win there.
     Scheduler ``auto`` keeps both FL2VA and Ref2VA on the ``simple`` schedule
     used by the published ComfyUI workflow templates.  This also avoids the
     visibly under-denoised Draft output observed with Ref2VA ``normal``.

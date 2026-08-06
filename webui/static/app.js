@@ -231,10 +231,10 @@ const audioPresetLabels = {
 };
 
 const accelerationLabels = {
-  off: "高速化OFF",
-  community: "EasyCache 公開例",
-  conservative: "EasyCache 保守的",
-  balanced: "EasyCache 高速",
+  off: "高速化なし（比較用）",
+  community: "おすすめ：控えめ（通常）",
+  conservative: "より慎重（品質優先）",
+  balanced: "速度優先（品質を確認）",
 };
 
 function jobAccelerationMeta(job) {
@@ -847,13 +847,16 @@ function updateSummary() {
   const requestedAcceleration = ui.acceleration.value;
   const cacheAutoOff = Number(ui.quality.value) < 12 && requestedAcceleration !== "off";
   const acceleration = cacheAutoOff
-    ? "EasyCache 自動OFF"
-    : accelerationLabels[requestedAcceleration] || "高速化OFF";
+    ? "Draft：高速化なし（自動）"
+    : accelerationLabels[requestedAcceleration] || "高速化なし（比較用）";
   ui.generateSummary.textContent = `${resolutionSummary} · ${duration} · ${quality} · ${audio} · ${acceleration}`;
   ui.accelerationNote.classList.toggle("auto-off", cacheAutoOff);
   ui.accelerationNote.textContent = cacheAutoOff
-    ? "Draft（steps<12）のため、この生成ではEasyCacheを自動OFFにします。Standard / Highでは選択した近似処理を使い、映像と音声がわずかに変わる可能性があります。"
+    ? "Draft（12 steps未満）では自動的に高速化なしになります。"
     : "公開例はthreshold 0.20・sampling 15%～95%。EasyCacheは近似処理なので、Draft（steps<12）では自動OFF。映像と音声がわずかに変わる可能性があります。";
+  ui.accelerationNote.textContent = cacheAutoOff
+    ? "Draft（12 steps未満）では自動的に高速化なしになります。"
+    : "通常は「おすすめ：控えめ（通常）」で問題ありません。品質比較は「高速化なし」、速度優先の試作は「速度優先」を選んでください。";
   const { width, height } = resolution || { width: 0, height: 0 };
   const denoiseForwards = Math.max(1, Number(ui.quality.value) - 1);
   const baselineWork = 960 * 544 * 124 * 7;
@@ -995,7 +998,7 @@ function updateSystem(snapshot, capabilities) {
   ui.soundSection.classList.toggle("pending", !soundControlsReady);
   ui.soundStatus.textContent = soundControlsReady
     ? "日本語台詞は原文のまま1回だけ保持し、映像・カメラ・音響の英語制御文とは分離します。"
-    : "現在の生成が終わったあと、H3 Studioサーバーを再起動すると音響コントロールが有効になります。";
+    : "現在の生成が終わったあと、NIKU H STUDIOサーバーを再起動すると音響コントロールが有効になります。";
   syncPromptModeControls();
 
   if (snapshot.gpu) {
@@ -1346,7 +1349,7 @@ function resetForm() {
   setResolutionSelection(resolutionCatalog.default_aspect_ratio, resolutionCatalog.default_quality);
   ui.duration.value = "124";
   ui.seed.value = "42";
-  ui.acceleration.value = "off";
+  ui.acceleration.value = "community";
   ui.refImageSize.value = "match";
   ui.promptProcessingMode.value = "community";
   ui.standaloneAudioPolicy.value = "dialogue_priority";

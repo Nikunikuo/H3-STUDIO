@@ -37,4 +37,4 @@ if ($LASTEXITCODE -ne 0) {
     throw "Web UI runtime validation failed."
 }
 
-Write-Host "H3 Studio Web UI environment is ready."
+Write-Host "NIKU H STUDIO Web UI environment is ready."

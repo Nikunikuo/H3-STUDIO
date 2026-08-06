@@ -34,13 +34,13 @@ Gitリポジトリにはモデル重みを含めません。初回セットア�
 - 固定revisionのライセンス: [Apache License 2.0](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507/blob/cdbee75f17c01a7cc42f958dc650907174af0554/LICENSE)
 - 現行ライセンス: [Qwen3-4B-Instruct-2507 LICENSE (current)](https://huggingface.co/Qwen/Qwen3-4B-Instruct-2507/blob/main/LICENSE)
 
-`Qwen3-4B-Instruct-2507`はApache License 2.0で公開されています。セットアップに追加のクリック同意は設けませんが、著作権、ライセンス、NOTICE、特許、商標等の条件は公式原文が支配します。H3 Studioは重みを再配布せず、固定revisionから直接取得して上流`LICENSE`をモデルディレクトリへ保存します。モデルは日本語自然文の意味展開だけを別processで行い、コード側が参照番号、台詞原文、audio policy、strict JSON schemaと公開成功例型の英語ブロック構造を検証します。コンパイルprocessは完了後に終了し、H3／ComfyUIと同時常駐しません。
+`Qwen3-4B-Instruct-2507`はApache License 2.0で公開されています。セットアップに追加のクリック同意は設けませんが、著作権、ライセンス、NOTICE、特許、商標等の条件は公式原文が支配します。NIKU H STUDIOは重みを再配布せず、固定revisionから直接取得して上流`LICENSE`をモデルディレクトリへ保存します。モデルは日本語自然文の意味展開だけを別processで行い、コード側が参照番号、台詞原文、audio policy、strict JSON schemaと公開成功例型の英語ブロック構造を検証します。コンパイルprocessは完了後に終了し、H3／ComfyUIと同時常駐しません。
 
 ## セットアップ時の確認 / Setup acknowledgement
 
 `Setup-H3-Studio.cmd`は、ファイルを取得する前にMiniMax H3の公式ライセンスを表示し、明示確認を必須にします。Apache-2.0のQwen plannerは追加同意なしで必須コンポーネントとして取得します。
 
-PowerShellから通常セットアップを直接実行すると、Qwen plannerは固定revisionと許可リストで自動取得されます。初回セットアップは9ファイルのサイズ／SHA-256照合、offline設定／Tokenizer検査、CPUでの全重みロードprobeまで行い、全件一致後にH3 Studio管理の来歴markerを原子的に作成します。通常起動の高速`-VerifyOnly -SkipModelHash`は全ファイルのサイズ、offline設定／Tokenizer互換、markerのモデルID・revision・lock SHA-256・件数・総容量を検査し、必須Qwenが欠けているか来歴が一致しなければ起動せず再セットアップを案内します。
+PowerShellから通常セットアップを直接実行すると、Qwen plannerは固定revisionと許可リストで自動取得されます。初回セットアップは9ファイルのサイズ／SHA-256照合、offline設定／Tokenizer検査、CPUでの全重みロードprobeまで行い、全件一致後にNIKU H STUDIO管理の来歴markerを原子的に作成します。通常起動の高速`-VerifyOnly -SkipModelHash`は全ファイルのサイズ、offline設定／Tokenizer互換、markerのモデルID・revision・lock SHA-256・件数・総容量を検査し、必須Qwenが欠けているか来歴が一致しなければ起動せず再セットアップを案内します。
 
 モデルを利用、複製、変更、配布、実行または表示する行為自体が、公式ライセンス上の同意行為になり得ます。利用する時点・地域・用途について、必ず公式原文を確認してください。
 
