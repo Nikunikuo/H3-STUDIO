@@ -419,6 +419,54 @@ class CommunityPromptPlannerTests(unittest.TestCase):
         )
         self.assertEqual(prepared.source_shot_numbers, (1, 2))
 
+    def test_fullwidth_parenthesized_cut_headers_are_preserved(self) -> None:
+        prepared = prepare_planner_input(
+            "Cut 1\uFF080.0-2.6\u79D2\uFF09\nChurch exterior.\n"
+            "cut 2\nA hand reaches for the door.\n"
+            "Cut3\nThe boss breaks through the ceiling.\n"
+            "Cut4\nThe boss turns in profile.\n"
+            "Cut5\nThe heroine raises her sword.",
+            duration_seconds=14.4,
+        )
+        self.assertEqual(prepared.source_shot_numbers, (1, 2, 3, 4, 5))
+
+    def test_source_instruction_conflicts_are_advisory_warnings(self) -> None:
+        prepared = prepare_planner_input(
+            "Cut 1\n"
+            "The boss speaks one line in an unknown language.\n"
+            "字幕を表示する。\n"
+            "\u53f0\u8a5e\u306a\u3057\u3002\n"
+            "\u7981\u6b62: \u753b\u9762\u5185\u5b57\u5e55\u3002",
+            duration_seconds=5,
+        )
+        warnings = {item.code: item.to_dict() for item in prepared.source_warnings}
+        self.assertEqual(
+            set(warnings),
+            {"SOURCE_SPEECH_CONFLICT", "SOURCE_ONSCREEN_TEXT_CONFLICT"},
+        )
+        self.assertTrue(all(item["severity"] == "warning" for item in warnings.values()))
+        self.assertTrue(all(item["fatal"] is False for item in warnings.values()))
+
+    def test_worker_exposes_source_warnings_without_rejecting_the_request(self) -> None:
+        response = process_request(
+            {
+                "prompt": (
+                    "Cut 1\nThe boss speaks one line.\n"
+                    "字幕を表示する。\n"
+                    "\u53f0\u8a5e\u306a\u3057\u3002\n"
+                    "\u7981\u6b62: \u753b\u9762\u5185\u5b57\u5e55\u3002"
+                ),
+                "duration_seconds": 5,
+                "music_policy": "none",
+            },
+            planner=lambda _: _json(dialogue=False),
+        )
+        self.assertTrue(response["ok"])
+        self.assertEqual(
+            {item["code"] for item in response["diagnostics"]},
+            {"SOURCE_SPEECH_CONFLICT", "SOURCE_ONSCREEN_TEXT_CONFLICT"},
+        )
+
     def test_camera_glossary_corrects_low_and_high_angle_meaning(self) -> None:
         low = self._prepared()
         bad_low = _plan(camera="A static high-angle camera looks downward.")

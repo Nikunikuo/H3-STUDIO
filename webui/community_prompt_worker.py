@@ -417,7 +417,9 @@ def process_request(
         "compiled_prompt": compiled.prompt,
         "plan": compiled.plan.to_dict(),
         "planner_metadata": metadata,
-        "diagnostics": [],
+        "diagnostics": [
+            warning.to_dict() for warning in prepared.source_warnings
+        ],
     }
 
 
