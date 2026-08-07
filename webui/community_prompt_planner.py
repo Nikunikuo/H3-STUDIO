@@ -237,6 +237,7 @@ class CompiledCommunityPrompt:
     prompt: str
     plan: CommunityPromptPlan
     prepared: PreparedPlannerInput
+    duration_normalized: bool = False
 
     def metadata(self) -> dict[str, Any]:
         return {
@@ -265,6 +266,7 @@ class CompiledCommunityPrompt:
             "source_warnings": [
                 warning.to_dict() for warning in self.prepared.source_warnings
             ],
+            "timeline_duration_normalized": self.duration_normalized,
         }
 
 
@@ -335,6 +337,12 @@ Source reference tags have been rewritten as ordinary descriptive phrases.
 Never turn those phrases back into tags. Python will insert all reference tags
 and exact dialogue later.
 
+If the source mentions a character speaking but there are no supplied DIALOGUE
+IDs, keep the shot visual-only: show a reaction or mouth movement without
+speech, narration, subtitles, captions, runes, or other readable on-screen
+text. If the source contains both a request and a prohibition for speech or
+on-screen text, the prohibition wins so the compiled plan stays safe.
+
 Use this exact JSON shape and no additional keys:
 {
   "schema_version": "h3-community-plan-v1",
@@ -372,6 +380,11 @@ instructions explicit. A Japanese 仰角 or 煽り instruction means a low-angle
 numbered Shot where the source requested it. Within one Shot, never combine a
 low-angle or upward view with an above, high-angle, or downward view, and never
 combine a high-angle or downward view with a below, low-angle, or upward view.
+The direction of a subject entering from above is an action, not camera
+geometry. For a boss breaking through a ceiling, put that entry direction in
+action and use one neutral or low-angle camera view; do not write "from above"
+or "high-angle" in framing or camera unless the camera itself is above the
+subject and looks down.
 Treat breathing, panting, grunts, and
 exertion cries such as はぁはぁ or うおお as nonverbal physical foley unless
 the source explicitly labels the quoted literal as dialogue. Include each
@@ -1467,7 +1480,67 @@ def validate_plan(plan: CommunityPromptPlan, prepared: PreparedPlannerInput) -> 
         raise _error(f"The model dropped numeric facts: {summary}.", "NUMERIC_FACT_MISSING")
 
 
-def parse_plan_json(raw: str, prepared: PreparedPlannerInput) -> CommunityPromptPlan:
+def _normalize_plan_duration(
+    plan: CommunityPromptPlan, prepared: PreparedPlannerInput
+) -> tuple[CommunityPromptPlan, bool]:
+    """Fit model-authored shot times to the actual H3 output duration.
+
+    The model is asked to preserve source timing, but authored prompts often
+    omit later Cut timecodes while the UI still has an exact frame budget. A
+    proportional fit keeps the model's cut order and relative rhythm, while
+    preventing an otherwise valid Japanese prompt from being rejected merely
+    because the final generated frame budget is shorter or longer.
+    """
+
+    target = prepared.duration_seconds
+    if target is None or not plan.shots:
+        return plan, False
+    source_end = plan.shots[-1].end_seconds
+    if source_end <= 0 or abs(source_end - target) <= 0.05:
+        return plan, False
+    scale = target / source_end
+    shots = tuple(
+        ShotPlan(
+            number=shot.number,
+            start_seconds=round(shot.start_seconds * scale, 4),
+            end_seconds=round(shot.end_seconds * scale, 4),
+            framing=shot.framing,
+            camera=shot.camera,
+            action=shot.action,
+        )
+        for shot in plan.shots
+    )
+    deliveries = tuple(
+        DialogueDelivery(
+            dialogue_id=delivery.dialogue_id,
+            shot=delivery.shot,
+            start_seconds=round(delivery.start_seconds * scale, 4),
+            speaker=delivery.speaker,
+            delivery=delivery.delivery,
+        )
+        for delivery in plan.dialogue_delivery
+    )
+    return (
+        CommunityPromptPlan(
+            schema_version=plan.schema_version,
+            style=plan.style,
+            scene=plan.scene,
+            shots=shots,
+            ambient=plan.ambient,
+            foley=plan.foley,
+            music=plan.music,
+            dialogue_delivery=deliveries,
+        ),
+        True,
+    )
+
+
+def parse_plan_json(
+    raw: str,
+    prepared: PreparedPlannerInput,
+    *,
+    normalize_duration: bool = True,
+) -> CommunityPromptPlan:
     """Parse one raw model result and enforce the strict plan schema."""
 
     if not isinstance(raw, str) or not raw.strip():
@@ -1545,7 +1618,9 @@ def parse_plan_json(raw: str, prepared: PreparedPlannerInput) -> CommunityPrompt
         music=_english_string(value["music"], "music", allow_na=True),
         dialogue_delivery=tuple(deliveries),
     )
-    validate_plan(plan, prepared)
+    if normalize_duration:
+        plan, _ = _normalize_plan_duration(plan, prepared)
+        validate_plan(plan, prepared)
     return plan
 
 
@@ -1706,8 +1781,14 @@ def validate_rendered_prompt(
 
 
 def compile_model_result(raw: str, prepared: PreparedPlannerInput) -> CompiledCommunityPrompt:
-    plan = parse_plan_json(raw, prepared)
-    return CompiledCommunityPrompt(render_prompt(plan, prepared), plan, prepared)
+    plan = parse_plan_json(raw, prepared, normalize_duration=False)
+    normalized_plan, normalized = _normalize_plan_duration(plan, prepared)
+    if normalized:
+        plan = normalized_plan
+    validate_plan(plan, prepared)
+    return CompiledCommunityPrompt(
+        render_prompt(plan, prepared), plan, prepared, duration_normalized=normalized
+    )
 
 
 def inspect_model_checkout(

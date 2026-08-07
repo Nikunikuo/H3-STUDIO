@@ -258,6 +258,40 @@ def _parse_max_new_tokens(value: Any) -> int:
     return result
 
 
+def _retry_instruction(exc: CommunityPromptPlannerError) -> str:
+    """Build a targeted correction without weakening the plan validator."""
+
+    instruction = (
+        f"REJECTED ({exc.code}): {exc}. Return a corrected complete raw JSON object only. "
+        "Keep all original constraints."
+    )
+    if exc.code == "CAMERA_DIRECTION_CONFLICT":
+        instruction += (
+            " Camera geometry only: a subject or object entering, falling, or descending "
+            "from above or below describes its action trajectory, not the camera viewpoint. "
+            "Keep that trajectory in the action field; do not copy it into framing or camera "
+            "as overhead, high-angle, from above, below, or low-angle unless the source "
+            "explicitly requests that camera view. Choose one coherent framing/camera pair. "
+            "A camera below a ceiling looking upward at a subject descending through it is "
+            "coherent."
+        )
+    elif exc.code in {"INVENTED_SPEECH_CONTROL", "INVENTED_SPEECH_AUDIO"}:
+        instruction += (
+            " Remove every speech, narration, voice-over, subtitle, caption, rune, label, "
+            "and readable-text instruction from style, scene, framing, camera, action, "
+            "ambient, and foley. No DIALOGUE IDs were supplied, so dialogue_delivery "
+            "must be an empty list. Keep the visual event as a reaction or mouth movement "
+            "without audible speech, and use physical/environmental sounds only."
+        )
+    elif exc.code == "NUMERIC_FACT_MISSING":
+        instruction += (
+            " Restore every required numeric fact exactly as supplied, including the exact "
+            "decimal duration and its unit. Repeat each required number verbatim in the "
+            "style or scene field; do not round, convert, or omit any number."
+        )
+    return instruction
+
+
 def process_request(
     payload: Mapping[str, Any],
     *,
@@ -283,7 +317,12 @@ def process_request(
             f"Only the pinned planner revision {MODEL_REVISION} is allowed.",
             code="MODEL_REVISION_NOT_PINNED",
         )
-    max_attempts_value = payload.get("max_attempts", 2)
+    # Two attempts were not enough for the local model on otherwise valid
+    # Japanese prompts: it can fix one validator issue and introduce a second
+    # one (for example, camera geometry followed by a dropped duration). Keep
+    # the caller override, but make the production default the full safe retry
+    # budget.
+    max_attempts_value = payload.get("max_attempts", 3)
     if isinstance(max_attempts_value, bool):
         raise CommunityPromptPlannerError(
             "max_attempts must be an integer from 1 to 3.",
@@ -375,10 +414,7 @@ def process_request(
                     {"role": "assistant", "content": raw},
                     {
                         "role": "user",
-                        "content": (
-                            f"REJECTED ({exc.code}): {exc}. Return a corrected complete "
-                            "raw JSON object only. Keep all original constraints."
-                        ),
+                        "content": _retry_instruction(exc),
                     },
                 ]
             )

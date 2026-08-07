@@ -27,7 +27,7 @@ COMMUNITY_PLANNER_MODEL_ID = "Qwen/Qwen3-4B-Instruct-2507"
 COMMUNITY_PLANNER_REVISION = "cdbee75f17c01a7cc42f958dc650907174af0554"
 COMMUNITY_PLANNER_CONTRACT = "h3-community-plan-v1"
 COMMUNITY_COMPILER_REVISION = (
-    "2026-08-07-native-clean-v4-japanese-shot-headers-source-warnings"
+    "2026-08-07-native-clean-v5-camera-entry-retry"
 )
 COMMUNITY_CACHE_SCHEMA_VERSION = 1
 COMMUNITY_PLANNER_LOCK = "prompt_planner.lock.json"
@@ -980,7 +980,7 @@ class JobManager:
             "audio_preset": str(request.get("audio_preset") or "auto"),
             "music_policy": str(request.get("music_policy") or "auto"),
             "expected_revision": COMMUNITY_PLANNER_REVISION,
-            "max_attempts": 2,
+            "max_attempts": 3,
         }
         cache_payload = dict(payload)
         cache_payload.update(

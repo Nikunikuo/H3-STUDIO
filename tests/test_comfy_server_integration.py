@@ -52,6 +52,12 @@ class IsolatedManager:
     def list_jobs(self) -> list[dict]:
         return copy.deepcopy(self.submitted)
 
+    def get_job(self, job_id: str) -> dict | None:
+        return next(
+            (copy.deepcopy(job) for job in self.submitted if job["id"] == job_id),
+            None,
+        )
+
     def current_job_id(self) -> None:
         return None
 
@@ -271,6 +277,48 @@ class ComfyServerIntegrationTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertEqual(self.manager.submitted, [])
         self.assertEqual(set(self.manager.jobs_dir.iterdir()), before)
+
+    def test_saved_omni_attachments_can_be_downloaded_in_original_order_with_duplicates(self) -> None:
+        form = self._t2v_form()
+        form.update(
+            mode="omni",
+            prompt="<Picture 1>と<Picture 2>を同じ人物の別カットとして使う。",
+        )
+        expected = [
+            ("same.png", b"first-copy"),
+            ("same.png", b"second-copy"),
+            ("location.png", b"third-copy"),
+        ]
+        response = self.client.post(
+            "/api/jobs",
+            data=form,
+            files=[
+                ("references", (name, content, "image/png"))
+                for name, content in expected
+            ],
+            headers={
+                self.server.LOCAL_MUTATION_HEADER:
+                    self.server.LOCAL_MUTATION_VALUE
+            },
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        payload = response.json()
+        self.assertEqual(
+            [item["name"] for item in payload["attachments"]],
+            [name for name, _ in expected],
+        )
+        self.assertEqual(
+            [item["index"] for item in payload["attachments"]],
+            list(range(len(expected))),
+        )
+        for index, (_, content) in enumerate(expected):
+            with self.subTest(index=index):
+                attachment = self.client.get(
+                    f"/api/jobs/{payload['id']}/attachments/{index}"
+                )
+                self.assertEqual(attachment.status_code, 200)
+                self.assertEqual(attachment.content, content)
 
     def test_community_request_persists_native_clean_queue_contract(self) -> None:
         prompt = "白い紙飛行機が夕日の中を大きく旋回する。"
