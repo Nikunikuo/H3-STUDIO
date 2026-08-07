@@ -56,7 +56,11 @@ _QUOTE_RE = re.compile(
 _SHOT_HEADER_RE = re.compile(
     r"(?im)^\s*(?:\[(?:Cut|Shot)\s*(?P<bracket>[1-9][0-9]*)\]"
     r"|(?:Cut|Shot|カット|ショット)\s*#?\s*(?P<plain>[1-9][0-9]*))"
-    r"(?=\s|$|[:：-])"
+    # Japanese authors commonly append an inline time range with full-width
+    # punctuation, for example ``Cut 1（0.0-2.6秒）``.  Treat those opening
+    # delimiters as part of the header boundary instead of silently dropping
+    # that cut from the deterministic source-shot order.
+    r"(?=\s|$|[:：\-\u2010-\u2015\uFF08\u3010\u300C\u300E(\[])"
 )
 _VISUAL_TEXT_CUE_RE = re.compile(
     r"(?:字幕|テロップ|看板|標識|画面|文字|題名|タイトル|表示|書か|"
@@ -159,6 +163,22 @@ class NumericFact:
 
 
 @dataclass(frozen=True, slots=True)
+class SourceWarning:
+    """Non-fatal authoring ambiguity surfaced beside a compiled prompt."""
+
+    code: str
+    message: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "severity": "warning",
+            "code": self.code,
+            "message": self.message,
+            "fatal": False,
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class PreparedPlannerInput:
     source_prompt: str
     redacted_prompt: str
@@ -175,6 +195,7 @@ class PreparedPlannerInput:
     wardrobe_override: bool = False
     wardrobe_direction: str = ""
     wardrobe_required_terms: tuple[str, ...] = ()
+    source_warnings: tuple[SourceWarning, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,6 +262,9 @@ class CompiledCommunityPrompt:
             "music_policy": self.prepared.music_policy,
             "wardrobe_override": self.prepared.wardrobe_override,
             "wardrobe_direction": self.prepared.wardrobe_direction or None,
+            "source_warnings": [
+                warning.to_dict() for warning in self.prepared.source_warnings
+            ],
         }
 
 
@@ -443,6 +467,66 @@ def _voice_direction_for(context: str, literal: str) -> str:
             direction = "a " + ", ".join(traits)
         return f"{direction}, {performance}" if performance else direction
     return performance
+
+
+_NO_DIALOGUE_RE = re.compile(
+    r"(?:セリフ|台詞|発話|会話|音声|声)\s*(?:は|を)?\s*"
+    r"(?:なし|無し|無|禁止|不要|入れない|入れず)",
+    re.IGNORECASE,
+)
+_ONSCREEN_TEXT_TERM_RE = re.compile(r"(?:字幕|テロップ)")
+_NEGATION_RE = re.compile(
+    r"(?:禁止|なし|無し|無|不要|入れない|入れず|避ける)",
+    re.IGNORECASE,
+)
+
+
+def _has_unnegated_onscreen_text_request(prompt: str) -> bool:
+    """Detect a positive caption request without treating its prohibition as one."""
+
+    for line in prompt.splitlines():
+        if _ONSCREEN_TEXT_TERM_RE.search(line) and not _NEGATION_RE.search(line):
+            return True
+    return False
+
+
+def _has_negated_onscreen_text_request(prompt: str) -> bool:
+    return any(
+        _ONSCREEN_TEXT_TERM_RE.search(line) and _NEGATION_RE.search(line)
+        for line in prompt.splitlines()
+    )
+
+
+def _source_warnings(
+    prompt: str,
+    dialogues: Sequence[DialogueLiteral],
+) -> tuple[SourceWarning, ...]:
+    """Return advisory diagnostics without rejecting ordinary authoring prose."""
+
+    warnings: list[SourceWarning] = []
+    if (
+        not dialogues
+        and _EXPLICIT_SPEECH_CUE_RE.search(prompt)
+        and _NO_DIALOGUE_RE.search(prompt)
+    ):
+        warnings.append(
+            SourceWarning(
+                "SOURCE_SPEECH_CONFLICT",
+                "The source asks a character to speak while also forbidding dialogue; "
+                "no invented words will be supplied to the planner.",
+            )
+        )
+    if _has_unnegated_onscreen_text_request(prompt) and _has_negated_onscreen_text_request(
+        prompt
+    ):
+        warnings.append(
+            SourceWarning(
+                "SOURCE_ONSCREEN_TEXT_CONFLICT",
+                "The source both requests and prohibits on-screen captions; "
+                "the H3 planner contract does not invent subtitles or captions.",
+            )
+        )
+    return tuple(warnings)
 
 
 _WARDROBE_TERM_RE = re.compile(
@@ -1041,6 +1125,7 @@ def prepare_planner_input(
     source_shots = extract_shot_numbers(prompt)
     fact_source = "\n".join(value for value in (redacted, style_direction, soundscape) if value)
     facts = extract_numeric_facts(fact_source)
+    source_warnings = _source_warnings(prompt, dialogues)
     return PreparedPlannerInput(
         source_prompt=prompt,
         redacted_prompt=redacted.strip(),
@@ -1057,6 +1142,7 @@ def prepare_planner_input(
         wardrobe_override=wardrobe_override,
         wardrobe_direction=wardrobe_direction,
         wardrobe_required_terms=wardrobe_required_terms,
+        source_warnings=source_warnings,
     )
 
 
@@ -1773,6 +1859,7 @@ __all__ = [
     "PreparedPlannerInput",
     "ReferenceItem",
     "SYSTEM_PROMPT",
+    "SourceWarning",
     "ShotPlan",
     "build_model_messages",
     "compile_model_result",

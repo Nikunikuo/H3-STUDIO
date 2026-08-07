@@ -1,6 +1,7 @@
 const $ = (selector) => document.querySelector(selector);
 const localMutationHeaders = Object.freeze({ "X-H3-Studio-Request": "1" });
 const $$ = (selector) => Array.from(document.querySelectorAll(selector));
+const FIXED_PROMPT_PROCESSING_MODE = "community";
 
 const ui = {
   modelDot: $("#model-dot"),
@@ -631,13 +632,11 @@ function restoreAudioPrompt(job) {
     job?.standalone_audio_policy_requested,
     job?.standalone_audio_policy_effective,
   ].some((value) => value === "full_content");
-  const riskyPromptProcessing = !["community", "raw_en"].includes(
-    job?.prompt_processing_mode || "community",
-  );
-  // Persisted jobs from removed modes return to the current community planner.
-  const restoredPromptMode = ["community", "raw_en"].includes(job?.prompt_processing_mode)
-    ? job.prompt_processing_mode
-    : "community";
+  const riskyPromptProcessing = job?.prompt_processing_mode
+    && job.prompt_processing_mode !== FIXED_PROMPT_PROCESSING_MODE;
+  // Persisted jobs from the removed selector always return to the current
+  // Japanese community planner.
+  const restoredPromptMode = FIXED_PROMPT_PROCESSING_MODE;
   ui.promptProcessingMode.value = restoredPromptMode;
   // Full-content Audio is an explicit risk opt-in and is never silently
   // restored from history.  A reused job always returns to the safe policy.
@@ -887,7 +886,7 @@ function updateSummary() {
 }
 
 function updatePlannerWarning() {
-  const wantsCommunityPlanner = ui.promptProcessingMode.value === "community";
+  const wantsCommunityPlanner = FIXED_PROMPT_PROCESSING_MODE === "community";
   const plannerReady = state.capabilities?.prompt_planner?.ready === true;
   const show = wantsCommunityPlanner && !plannerReady;
   ui.plannerWarning.classList.toggle("hidden", !show);
@@ -897,7 +896,11 @@ function updatePlannerWarning() {
 }
 
 function syncPromptModeControls({ resetRawFields = false } = {}) {
-  const raw = ui.promptProcessingMode.value === "raw_en";
+  if (ui.promptProcessingMode) {
+    ui.promptProcessingMode.value = FIXED_PROMPT_PROCESSING_MODE;
+    ui.promptProcessingMode.disabled = true;
+  }
+  const raw = false;
   if (raw && resetRawFields) {
     setStyle("natural");
     ui.soundPreset.value = "auto";
@@ -944,8 +947,9 @@ async function submitJob() {
   const data = new FormData();
   data.append("mode", state.mode);
   data.append("style", state.style);
-  // raw_en is an audit/pass-through mode, so preserve the textarea bytes.
-  // Empty-input validation above may inspect trim(), but submission must not.
+  // The local UI always compiles Japanese authoring text through the community
+  // planner. Keep this fixed even if an old browser submits a stale hidden
+  // select value.
   data.append("prompt", ui.prompt.value);
   data.append("width", String(width));
   data.append("height", String(height));
@@ -954,7 +958,7 @@ async function submitJob() {
   data.append("seed", ui.seed.value || "42");
   data.append("acceleration", ui.acceleration.value);
   data.append("ref_image_size", ui.refImageSize.value);
-  data.append("prompt_processing_mode", ui.promptProcessingMode.value);
+  data.append("prompt_processing_mode", FIXED_PROMPT_PROCESSING_MODE);
   data.append("standalone_audio_policy", ui.standaloneAudioPolicy.value);
   data.append("audio_preset", ui.soundPreset.value);
   data.append("dialogue", ui.dialogue.value.trim());
@@ -1351,7 +1355,7 @@ function resetForm() {
   ui.seed.value = "42";
   ui.acceleration.value = "community";
   ui.refImageSize.value = "match";
-  ui.promptProcessingMode.value = "community";
+  ui.promptProcessingMode.value = FIXED_PROMPT_PROCESSING_MODE;
   ui.standaloneAudioPolicy.value = "dialogue_priority";
   updateStandaloneAudioPolicyNote();
   ui.soundPreset.value = "auto";
