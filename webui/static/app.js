@@ -53,12 +53,6 @@ const ui = {
   seed: $("#seed"),
   acceleration: $("#acceleration"),
   accelerationNote: $("#acceleration-note"),
-  promptProcessingMode: $("#prompt-processing-mode"),
-  promptProcessingNote: $("#prompt-processing-note"),
-  weightWarning: $("#weight-warning"),
-  weightWarningTitle: $("#weight-warning-title"),
-  weightWarningText: $("#weight-warning-text"),
-  quickPreview: $("#quick-preview"),
   generate: $("#generate"),
   generateSummary: $("#generate-summary"),
   plannerWarning: $("#planner-warning"),
@@ -466,16 +460,130 @@ function attachmentSignature(job) {
     .join("\u0003");
 }
 
-function prepareReferencesForReuse(job) {
+function clearReferencesForPromptOnlyReuse(job) {
   const expected = jobReferenceMap(job);
   if (!expected.length) return "";
-  // Browser File objects do not expose a trusted persisted content hash.  A
-  // filename+size comparison can mistake different content for the old input,
-  // so prompt reuse always requires explicit reattachment in the audited order.
+  // Prompt-only reuse deliberately leaves attachment restoration to the
+  // settings + prompt action, where the persisted bytes can be fetched too.
   state.references = [];
   renderReferences();
   const order = expected.map((entry) => `${entry.tag} ${entry.name}`).join(" → ");
-  return `内容の取り違えを防ぐため参照素材をクリアしました。同じ順で再添付: ${order}`;
+  return `プロンプトだけを再利用したため参照素材をクリアしました。素材も戻す場合は「設定＋プロンプトを再利用」を使用してください。元の順序: ${order}`;
+}
+
+function reusableJobAttachments(job) {
+  const attachments = Array.isArray(job?.attachments) ? job.attachments : [];
+  if (job?.mode === "omni") return attachments;
+  if (job?.mode === "i2v") return attachments.slice(0, 1);
+  if (job?.mode === "first_last") return attachments.slice(0, 2);
+  return [];
+}
+
+function attachmentFallbackMimeType(attachment) {
+  const extension = String(attachment?.name || "").split(".").pop()?.toLowerCase();
+  const byExtension = {
+    png: "image/png",
+    jpg: "image/jpeg",
+    jpeg: "image/jpeg",
+    webp: "image/webp",
+    bmp: "image/bmp",
+    gif: "image/gif",
+    mp4: "video/mp4",
+    webm: "video/webm",
+    mov: "video/quicktime",
+    mkv: "video/x-matroska",
+    mp3: "audio/mpeg",
+    wav: "audio/wav",
+    flac: "audio/flac",
+    m4a: "audio/mp4",
+    ogg: "audio/ogg",
+  };
+  return byExtension[extension] || `${attachment?.kind || "application"}/octet-stream`;
+}
+
+function validateReusableJobAttachments(job, attachments) {
+  const supportedKinds = new Set(["image", "video", "audio"]);
+  if (job?.mode === "omni" && !attachments.length) {
+    throw new Error("この履歴には再利用できる参照素材が残っていません。");
+  }
+  if (job?.mode === "i2v" && attachments.length !== 1) {
+    throw new Error("この履歴には開始画像が残っていません。");
+  }
+  if (job?.mode === "first_last" && attachments.length !== 2) {
+    throw new Error("この履歴には開始画像と終了画像の両方が残っていません。");
+  }
+  attachments.forEach((attachment) => {
+    if (!supportedKinds.has(attachment?.kind)) {
+      throw new Error(`未対応の素材種別です: ${attachment?.kind || "unknown"}`);
+    }
+    if (["i2v", "first_last"].includes(job?.mode) && attachment.kind !== "image") {
+      throw new Error("開始画像／終了画像として復元できない素材が含まれています。");
+    }
+  });
+}
+
+async function downloadJobAttachment(job, attachment, position) {
+  const response = await fetch(
+    `/api/jobs/${encodeURIComponent(job.id)}/attachments/${position}`,
+    { cache: "no-store" },
+  );
+  if (!response.ok) {
+    throw new Error(`${attachment?.name || `素材${position + 1}`}を取得できませんでした（HTTP ${response.status}）。`);
+  }
+  const blob = await response.blob();
+  const expectedSize = Number(attachment?.size);
+  if (Number.isFinite(expectedSize) && expectedSize >= 0 && blob.size !== expectedSize) {
+    throw new Error(`${attachment?.name || `素材${position + 1}`}の保存サイズが一致しません。`);
+  }
+  const responseType = String(response.headers.get("content-type") || "").split(";", 1)[0].trim();
+  const expectedTypePrefix = `${attachment.kind}/`;
+  const type = responseType.startsWith(expectedTypePrefix)
+    ? responseType
+    : attachmentFallbackMimeType(attachment);
+  return new File(
+    [blob],
+    String(attachment?.name || `reference-${position + 1}`),
+    { type },
+  );
+}
+
+async function downloadReusableJobAttachments(job) {
+  const attachments = reusableJobAttachments(job);
+  validateReusableJobAttachments(job, attachments);
+  // Promise.all keeps the source-array order even when downloads finish in a
+  // different order. Duplicate entries intentionally remain separate Files.
+  return Promise.all(
+    attachments.map((attachment, position) => downloadJobAttachment(job, attachment, position)),
+  );
+}
+
+function applyReusedJobAttachments(job, files) {
+  ui.firstInput.value = "";
+  ui.lastInput.value = "";
+  state.references = [];
+
+  if (job.mode === "i2v") {
+    setFrameFile("first", files[0]);
+    setFrameFile("last", null);
+  } else if (job.mode === "first_last") {
+    setFrameFile("first", files[0]);
+    setFrameFile("last", files[1]);
+  } else if (job.mode === "omni") {
+    setFrameFile("first", null);
+    setFrameFile("last", null);
+    state.references = files;
+  } else {
+    setFrameFile("first", null);
+    setFrameFile("last", null);
+  }
+  renderReferences();
+
+  if (job.mode === "omni") {
+    return `参照素材${files.length}件を保存時の順番どおりに復元しました。`;
+  }
+  if (job.mode === "i2v") return "開始画像を復元しました。";
+  if (job.mode === "first_last") return "開始画像と終了画像を復元しました。";
+  return "";
 }
 
 function insertReferenceTag(tag) {
@@ -637,7 +745,6 @@ function restoreAudioPrompt(job) {
   // Persisted jobs from the removed selector always return to the current
   // Japanese community planner.
   const restoredPromptMode = FIXED_PROMPT_PROCESSING_MODE;
-  ui.promptProcessingMode.value = restoredPromptMode;
   // Full-content Audio is an explicit risk opt-in and is never silently
   // restored from history.  A reused job always returns to the safe policy.
   ui.standaloneAudioPolicy.value = "dialogue_priority";
@@ -671,7 +778,7 @@ function reusePromptOnly(job) {
   if (!job) return;
   setPromptValue(job.prompt, true);
   const audioPolicyMessage = restoreAudioPrompt(job);
-  const referenceMessage = prepareReferencesForReuse(job);
+  const referenceMessage = clearReferencesForPromptOnlyReuse(job);
   ui.prompt.closest(".form-section").scrollIntoView({ behavior: "smooth", block: "center" });
   const messages = [referenceMessage, audioPolicyMessage].filter(Boolean);
   toast(messages.join(" ") || "プロンプトと任意の音声詳細を復元しました。", messages.length ? 9000 : 3300);
@@ -856,33 +963,6 @@ function updateSummary() {
   ui.accelerationNote.textContent = cacheAutoOff
     ? "Draft（12 steps未満）では自動的に高速化なしになります。"
     : "通常は「おすすめ：控えめ（通常）」で問題ありません。品質比較は「高速化なし」、速度優先の試作は「速度優先」を選んでください。";
-  const { width, height } = resolution || { width: 0, height: 0 };
-  const denoiseForwards = Math.max(1, Number(ui.quality.value) - 1);
-  const baselineWork = 960 * 544 * 124 * 7;
-  const outputWork = width * height * Number(ui.duration.value) * denoiseForwards;
-  const relativeWork = outputWork / baselineWork;
-  const omniReferences = state.mode === "omni" ? state.references.length : 0;
-  const omniImageReferences = state.mode === "omni"
-    ? state.references.filter((file) => file.type.startsWith("image/")).length
-    : 0;
-  const highPrecisionReferences = omniImageReferences > 0 && ui.refImageSize.value === "max";
-  const heavy = relativeWork > 2 || omniReferences >= 2 || highPrecisionReferences;
-  ui.weightWarning.classList.toggle("hidden", !heavy);
-  if (!heavy) return;
-
-  let severity = "高負荷設定です";
-  if (relativeWork >= 6) severity = "かなり高負荷です";
-  if (relativeWork >= 12 || (relativeWork >= 6 && omniReferences >= 2)) severity = "最大級の負荷です";
-  ui.weightWarningTitle.textContent = `${severity}（出力側の概算 ×${relativeWork.toFixed(1)}）`;
-  const referencePolicy = !omniImageReferences
-    ? ""
-    : ui.refImageSize.value === "max"
-      ? " 高精度設定の画像はアップスケールせず、短辺2048pxを上限に解析するためmatchより重くなります。"
-      : " 高速設定の画像は出力面積に合わせて縮小し、参照解析負荷を抑えます。";
-  const referenceNote = omniReferences
-    ? ` さらにOmni参照${omniReferences}件のQwen解析とattention負荷が加わります。${referencePolicy}`
-    : "";
-  ui.weightWarningText.textContent = `基準は960×544・約5秒・Draftです。これは画素数・長さ・denoise回数だけの相対目安です。${referenceNote}`;
 }
 
 function updatePlannerWarning() {
@@ -896,10 +976,6 @@ function updatePlannerWarning() {
 }
 
 function syncPromptModeControls({ resetRawFields = false } = {}) {
-  if (ui.promptProcessingMode) {
-    ui.promptProcessingMode.value = FIXED_PROMPT_PROCESSING_MODE;
-    ui.promptProcessingMode.disabled = true;
-  }
   const raw = false;
   if (raw && resetRawFields) {
     setStyle("natural");
@@ -920,9 +996,6 @@ function syncPromptModeControls({ resetRawFields = false } = {}) {
   [ui.soundPreset, ui.musicPolicy, ui.dialogue, ui.soundscape, ui.audioGain].forEach((element) => {
     element.disabled = !soundControlsReady;
   });
-  ui.promptProcessingNote.textContent = raw
-    ? "英語H3プロンプトを検証後、そのままnative Comfyへ渡します。スタイル・台詞・音響は別欄から追記されないため、必要な内容をこのプロンプト1本へ書いてください。"
-    : "日本語の意図を短い英語Storyboardへローカル変換し、実際の台詞だけを普通の引用符内へ原文のまま残します。独自IR・<d>・tokenizerパッチは使いません。変換後の全文は生成後の詳細で確認できます。";
   updatePlannerWarning();
   updateSummary();
 }
@@ -1355,7 +1428,6 @@ function resetForm() {
   ui.seed.value = "42";
   ui.acceleration.value = "community";
   ui.refImageSize.value = "match";
-  ui.promptProcessingMode.value = FIXED_PROMPT_PROCESSING_MODE;
   ui.standaloneAudioPolicy.value = "dialogue_priority";
   updateStandaloneAudioPolicyNote();
   ui.soundPreset.value = "auto";
@@ -1374,24 +1446,47 @@ function resetForm() {
   ui.formError.textContent = "";
 }
 
-function reuseSelectedJob() {
+async function reuseSelectedJob() {
   const job = selectedJob();
   if (!job) return;
-  setMode(job.mode === "omni" && !state.capabilities?.modes.omni ? "t2v" : job.mode);
-  setStyle(job.style);
-  setPromptValue(job.prompt);
-  ui.quality.value = String(job.steps);
-  selectNearestResolution(job.width, job.height);
-  ui.duration.value = String(job.num_frames);
-  ui.seed.value = String(job.seed);
-  ui.acceleration.value = job.acceleration || job.acceleration_mode || "off";
-  ui.refImageSize.value = job.ref_image_size || "match";
-  const audioPolicyMessage = restoreAudioPrompt(job);
-  const referenceMessage = prepareReferencesForReuse(job);
-  syncPromptModeControls();
-  const messages = [referenceMessage, audioPolicyMessage].filter(Boolean);
-  if (messages.length) toast(messages.join(" "), 9000);
-  window.scrollTo({ top: 0, behavior: "smooth" });
+  if (job.mode === "omni" && state.capabilities && !state.capabilities.modes.omni) {
+    toast("Omniが現在利用できないため、このジョブの素材と設定は復元できません。", 9000);
+    return;
+  }
+
+  const originalLabel = ui.reuseJob.textContent;
+  ui.reuseJob.disabled = true;
+  ui.reuseJob.textContent = "素材を復元中…";
+  try {
+    // Download first so a missing/deleted attachment cannot partially replace
+    // the user's current material selection.
+    const files = await downloadReusableJobAttachments(job);
+    setMode(job.mode);
+    setStyle(job.style);
+    setPromptValue(job.prompt);
+    ui.quality.value = String(job.steps);
+    selectNearestResolution(job.width, job.height);
+    ui.duration.value = String(job.num_frames);
+    ui.seed.value = String(job.seed);
+    ui.acceleration.value = job.acceleration || job.acceleration_mode || "off";
+    ui.refImageSize.value = job.ref_image_size || "match";
+    const audioPolicyMessage = restoreAudioPrompt(job);
+    const attachmentMessage = applyReusedJobAttachments(job, files);
+    syncPromptModeControls();
+    const messages = [
+      "設定とプロンプトを復元しました。",
+      attachmentMessage,
+      audioPolicyMessage,
+    ].filter(Boolean);
+    toast(messages.join(" "), audioPolicyMessage ? 9000 : 5000);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  } catch (errorValue) {
+    const detail = errorValue instanceof Error ? errorValue.message : String(errorValue);
+    toast(`素材を復元できなかったため、現在選択中の素材は変更していません。${detail}`, 9000);
+  } finally {
+    ui.reuseJob.disabled = false;
+    ui.reuseJob.textContent = originalLabel;
+  }
 }
 
 async function cancelSelectedJob() {
@@ -1450,12 +1545,6 @@ function initializeEvents() {
     updateSummary();
   });
   [ui.quality, ui.resolutionQuality, ui.duration, ui.acceleration, ui.refImageSize, ui.soundPreset, ui.musicPolicy].forEach((element) => element.addEventListener("change", updateSummary));
-  ui.promptProcessingMode.addEventListener("change", () => {
-    syncPromptModeControls({ resetRawFields: true });
-    if (ui.promptProcessingMode.value === "raw_en") {
-      toast("英語直結モードへ合わせ、別欄のスタイル・台詞・音響設定を自動に戻しました。");
-    }
-  });
   ui.standaloneAudioPolicy.addEventListener("change", () => {
     updateStandaloneAudioPolicyNote();
     updateSummary();
@@ -1465,15 +1554,6 @@ function initializeEvents() {
   });
   ui.soundscape.addEventListener("input", () => {
     ui.soundscapeCount.textContent = String(ui.soundscape.value.length);
-  });
-  ui.quickPreview.addEventListener("click", () => {
-    ui.quality.value = "8";
-    const aspectId = selectedResolutionAspect()?.id || activeResolutionCatalog().default_aspect_ratio;
-    setResolutionSelection(aspectId, "preview");
-    ui.duration.value = "124";
-    updateSummary();
-    const preview = selectedResolutionPreset();
-    toast(`軽量プレビュー設定（${preview.width}×${preview.height}・約5秒・Draft）へ変更しました。`);
   });
   $("#random-seed").addEventListener("click", () => {
     ui.seed.value = String(Math.floor(Math.random() * 2_147_483_647));

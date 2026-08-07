@@ -285,24 +285,6 @@
                 公開例はthreshold 0.20・sampling 15%～95%。EasyCacheは近似処理なので、Draft（steps&lt;12）では自動OFF。映像と音声がわずかに変わる可能性があります。
               </small>
             </label>
-            <label class="field prompt-processing-field" hidden aria-hidden="true">
-              <span>プロンプト処理</span>
-              <select id="prompt-processing-mode" aria-describedby="prompt-processing-note">
-                <option value="community" selected>日本語入力 · 公開成功例方式（推奨）</option>
-                <option value="raw_en">英語H3プロンプトをそのまま · 上級</option>
-              </select>
-              <small id="prompt-processing-note" hidden aria-hidden="true">
-                推奨設定は、日本語の意図を短い英語Storyboardへローカル変換し、実際の台詞だけを普通の引用符内へ原文のまま残します。独自IR・&lt;d&gt;・tokenizerパッチは使いません。変換後の全文は生成後の詳細で確認できます。
-              </small>
-            </label>
-          </div>
-          <div class="weight-warning hidden" id="weight-warning" hidden aria-hidden="true">
-            <span>!</span>
-            <div class="weight-warning-copy">
-              <strong id="weight-warning-title">高負荷設定です。</strong>
-              <p id="weight-warning-text">Full attentionで処理するため、他のGPUアプリを閉じてからの実行を推奨します。</p>
-            </div>
-            <button id="quick-preview" type="button">軽量プレビュー設定</button>
           </div>
         </div>
 

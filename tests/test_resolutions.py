@@ -46,17 +46,13 @@ class ResolutionPresetTests(unittest.TestCase):
         self.assertEqual(wide["presets"]["hd"]["width"], 1312)
         self.assertEqual(wide["presets"]["hd"]["height"], 736)
 
-    def test_quick_preview_preserves_the_selected_aspect_ratio(self) -> None:
-        source = (
-            Path(__file__).resolve().parents[1] / "webui" / "static" / "app.js"
-        ).read_text(encoding="utf-8")
-        handler_start = source.index('ui.quickPreview.addEventListener("click"')
-        handler_end = source.index("\n  });", handler_start)
-        handler = source[handler_start:handler_end]
+    def test_removed_load_warning_does_not_leave_a_dead_quick_preview_control(self) -> None:
+        static_root = Path(__file__).resolve().parents[1] / "webui" / "static"
+        source = (static_root / "app.js").read_text(encoding="utf-8")
+        html = (static_root / "index.html").read_text(encoding="utf-8")
 
-        self.assertIn("selectedResolutionAspect()?.id", handler)
-        self.assertIn('setResolutionSelection(aspectId, "preview")', handler)
-        self.assertNotIn('setResolutionSelection("16:9", "preview")', handler)
+        self.assertNotIn('id="quick-preview"', html)
+        self.assertNotIn("quickPreview", source)
 
 
 if __name__ == "__main__":

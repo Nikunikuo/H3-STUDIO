@@ -30,7 +30,10 @@ from webui.community_prompt_planner import (  # noqa: E402
     prepare_planner_input,
     require_verified_model_checkout,
 )
-from webui.community_prompt_worker import process_request  # noqa: E402
+from webui.community_prompt_worker import (  # noqa: E402
+    _retry_instruction,
+    process_request,
+)
 
 
 def _plan(
@@ -505,6 +508,31 @@ class CommunityPromptPlannerTests(unittest.TestCase):
                 with self.assertRaises(CommunityPromptPlannerError) as ctx:
                     parse_plan_json(json.dumps(plan), neutral)
                 self.assertEqual(ctx.exception.code, "CAMERA_DIRECTION_CONFLICT")
+
+    def test_subject_entry_direction_stays_in_action_not_camera_geometry(self) -> None:
+        prepared = prepare_planner_input(
+            "Cut 1\nThe boss enters from above through the ceiling.",
+            duration_seconds=5,
+        )
+        plan = _plan(
+            dialogue=False,
+            action="The boss breaks through the ceiling from above and descends into the church.",
+            camera="A low-angle camera below the ceiling looks upward at the descending subject.",
+        )
+        plan["shots"][0]["framing"] = "A wide low-angle composition from below the ceiling."
+        parsed = parse_plan_json(json.dumps(plan), prepared)
+        self.assertEqual(parsed.shots[0].number, 1)
+
+    def test_camera_retry_instruction_separates_subject_trajectory(self) -> None:
+        error = CommunityPromptPlannerError(
+            "Shot 3 contains contradictory camera geometry: high, low.",
+            code="CAMERA_DIRECTION_CONFLICT",
+        )
+        instruction = _retry_instruction(error)
+        self.assertIn("action field", instruction)
+        self.assertIn("not the camera viewpoint", instruction)
+        self.assertIn("Choose one coherent framing/camera pair", instruction)
+        self.assertIn("from above", instruction)
 
     def test_numbered_source_camera_cue_cannot_be_satisfied_by_another_shot(self) -> None:
         prepared = prepare_planner_input(

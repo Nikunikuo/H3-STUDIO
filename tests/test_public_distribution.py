@@ -132,12 +132,27 @@ class PublicDistributionTests(unittest.TestCase):
             with self.subTest(label=label):
                 self.assertIn(label, html)
                 self.assertIn(label, app)
-        self.assertIn('<option value="community" selected>', html)
         self.assertIn('ui.acceleration.value = "community"', app)
+        self.assertNotIn('id="prompt-processing-mode"', html)
+        self.assertNotIn('promptProcessingMode', app)
+        self.assertNotIn('id="weight-warning"', html)
+        self.assertNotIn('weightWarning', app)
+        self.assertIn('data.append("prompt_processing_mode", FIXED_PROMPT_PROCESSING_MODE);', app)
         self.assertIn("Draft（12 steps未満）では自動的に高速化なし", html)
         self.assertIn("Draft（12 steps未満）では自動的に高速化なし", app)
         self.assertNotIn("EasyCache 公開例", app)
         self.assertNotIn("EasyCache 高速", app)
+
+    def test_settings_and_prompt_reuse_restores_saved_attachments_in_order(self) -> None:
+        app = (ROOT / "webui/static/app.js").read_text(encoding="utf-8")
+        self.assertIn("async function downloadReusableJobAttachments(job)", app)
+        self.assertIn("attachments.map((attachment, position) => downloadJobAttachment", app)
+        self.assertIn("Promise.all(", app)
+        self.assertIn("state.references = files;", app)
+        self.assertIn('setFrameFile("first", files[0]);', app)
+        self.assertIn('setFrameFile("last", files[1]);', app)
+        self.assertIn("Duplicate entries intentionally remain separate Files.", app)
+        self.assertIn("await downloadReusableJobAttachments(job)", app)
 
     def test_product_brand_is_niku_h_studio(self) -> None:
         html = (ROOT / "webui/static/index.html").read_text(encoding="utf-8")
