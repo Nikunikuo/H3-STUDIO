@@ -27,7 +27,7 @@ COMMUNITY_PLANNER_MODEL_ID = "Qwen/Qwen3-4B-Instruct-2507"
 COMMUNITY_PLANNER_REVISION = "cdbee75f17c01a7cc42f958dc650907174af0554"
 COMMUNITY_PLANNER_CONTRACT = "h3-community-plan-v1"
 COMMUNITY_COMPILER_REVISION = (
-    "2026-08-07-native-clean-v5-camera-entry-retry"
+    "2026-08-08-native-clean-v15-source-warning-semantics"
 )
 COMMUNITY_CACHE_SCHEMA_VERSION = 1
 COMMUNITY_PLANNER_LOCK = "prompt_planner.lock.json"

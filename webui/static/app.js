@@ -192,12 +192,11 @@ function updateModeDescription() {
   }
   const useMax = ui.refImageSize.value === "max";
   ui.modeDescription.textContent = useMax
-    ? "画像・動画・音声を順番付きで参照します。画像はアップスケールせず、短辺2048pxを上限に高精度で解析します。"
-    : "画像・動画・音声を順番付きで参照します。画像は出力面積に合わせて縮小し、軽い設定で解析します。";
+    ? "画像・動画・音声を順番付きで参照します。画像は元画像の細部を活かして解析します。"
+    : "画像・動画・音声を順番付きで参照します。画像は出力面積に合わせて解析します。";
   ui.refImageSizeNote.textContent = useMax
-    ? "画像はアップスケールせず、短辺2048pxを上限に元解像度寄りで解析します。細部を残しやすい一方、Qwen解析とattentionが重くなります。"
-    : "画像を出力面積に合わせて縮小して解析します。通常はこちらが速く、参照処理の負荷も抑えられます。";
-  ui.refImageSizeNote.classList.toggle("high-precision", useMax);
+    ? "参照画像は元画像の細部を活かして扱います。"
+    : "参照画像は出力面積に合わせて扱います。";
 }
 
 const statusLabels = {
@@ -747,10 +746,10 @@ function restoreAudioPrompt(job) {
   const restoredPromptMode = FIXED_PROMPT_PROCESSING_MODE;
   // Full-content Audio is an explicit risk opt-in and is never silently
   // restored from history.  A reused job always returns to the safe policy.
-  ui.standaloneAudioPolicy.value = "dialogue_priority";
+  selectOptionValue(ui.standaloneAudioPolicy, "dialogue_priority", "dialogue_priority");
   updateStandaloneAudioPolicyNote();
-  ui.soundPreset.value = job?.audio_preset || "auto";
-  ui.musicPolicy.value = job?.music_policy || "auto";
+  selectOptionValue(ui.soundPreset, job?.audio_preset, "auto");
+  selectOptionValue(ui.musicPolicy, job?.music_policy, "auto");
   ui.dialogue.value = job?.dialogue || "";
   ui.dialogueCount.textContent = String(ui.dialogue.value.length);
   ui.soundscape.value = job?.soundscape || "";
@@ -782,6 +781,47 @@ function reusePromptOnly(job) {
   ui.prompt.closest(".form-section").scrollIntoView({ behavior: "smooth", block: "center" });
   const messages = [referenceMessage, audioPolicyMessage].filter(Boolean);
   toast(messages.join(" ") || "プロンプトと任意の音声詳細を復元しました。", messages.length ? 9000 : 3300);
+}
+
+function selectedOption(select, fallbackValue = "") {
+  const options = Array.from(select?.options || []);
+  if (!options.length) return null;
+  const current = options[select.selectedIndex];
+  if (current) return current;
+  const fallback = options.find((option) => option.value === String(fallbackValue));
+  const resolved = fallback || options[0];
+  select.value = resolved.value;
+  return resolved;
+}
+
+function selectOptionValue(select, value, fallbackValue = "") {
+  const options = Array.from(select?.options || []);
+  if (!options.length) return "";
+  const requested = String(value ?? "");
+  const resolved = options.find((option) => option.value === requested)
+    || options.find((option) => option.value === String(fallbackValue))
+    || options[0];
+  select.value = resolved.value;
+  return resolved.value;
+}
+
+function selectNearestNumericOption(select, value, fallbackValue = "") {
+  const options = Array.from(select?.options || []);
+  if (!options.length) return "";
+  const target = Number(value);
+  const numericOptions = options.filter((option) => Number.isFinite(Number(option.value)));
+  const nearest = Number.isFinite(target) && numericOptions.length
+    ? numericOptions.reduce((best, option) => (
+      Math.abs(Number(option.value) - target) < Math.abs(Number(best.value) - target)
+        ? option
+        : best
+    ))
+    : null;
+  const resolved = nearest
+    || options.find((option) => option.value === String(fallbackValue))
+    || options[0];
+  select.value = resolved.value;
+  return resolved.value;
 }
 
 function validResolutionPreset(preset) {
@@ -840,7 +880,8 @@ function activeResolutionCatalog() {
 function selectedResolutionAspect() {
   const catalog = activeResolutionCatalog();
   return catalog.aspect_ratios.find((aspect) => aspect.id === ui.aspectRatio.value)
-    || catalog.aspect_ratios[0];
+    || catalog.aspect_ratios[0]
+    || null;
 }
 
 function syncResolutionQualityOptions(preferredQuality = ui.resolutionQuality.value) {
@@ -891,6 +932,7 @@ function configureResolutionControls(rawCatalog) {
 function selectedResolutionPreset() {
   const catalog = activeResolutionCatalog();
   const aspect = selectedResolutionAspect();
+  if (!aspect) return null;
   const quality = catalog.qualities.find((item) => item.id === ui.resolutionQuality.value);
   const preset = aspect.presets[quality?.id];
   if (!quality || !validResolutionPreset(preset)) return null;
@@ -942,13 +984,15 @@ function selectNearestResolution(width, height) {
 
 function updateSummary() {
   updateModeDescription();
-  const quality = ui.quality.options[ui.quality.selectedIndex].text.split(" · ")[0];
+  const qualityOption = selectedOption(ui.quality, "20");
+  const durationOption = selectedOption(ui.duration, "124");
+  const quality = String(qualityOption?.text || ui.quality.value || "画質未設定").split(" · ")[0];
   const resolution = selectedResolutionPreset();
   const resolutionQuality = resolution?.qualityLabel.split(/\s+/)[0] || "—";
   const resolutionSummary = resolution
     ? `${resolution.aspectId} · ${resolutionQuality} · ${resolution.width}×${resolution.height}`
     : "解像度未設定";
-  const duration = ui.duration.options[ui.duration.selectedIndex].text;
+  const duration = String(durationOption?.text || ui.duration.value || "長さ未設定");
   const audio = audioPresetLabels[ui.soundPreset.value] || "音は自動";
   const requestedAcceleration = ui.acceleration.value;
   const cacheAutoOff = Number(ui.quality.value) < 12 && requestedAcceleration !== "off";
@@ -1421,17 +1465,17 @@ function resetForm() {
   setMode("t2v");
   setStyle("natural");
   setPromptValue("");
-  ui.quality.value = "20";
+  selectOptionValue(ui.quality, "20", "20");
   const resolutionCatalog = activeResolutionCatalog();
   setResolutionSelection(resolutionCatalog.default_aspect_ratio, resolutionCatalog.default_quality);
-  ui.duration.value = "124";
+  selectOptionValue(ui.duration, "124", "124");
   ui.seed.value = "42";
-  ui.acceleration.value = "community";
-  ui.refImageSize.value = "match";
-  ui.standaloneAudioPolicy.value = "dialogue_priority";
+  selectOptionValue(ui.acceleration, "community", "off");
+  selectOptionValue(ui.refImageSize, "match", "match");
+  selectOptionValue(ui.standaloneAudioPolicy, "dialogue_priority", "dialogue_priority");
   updateStandaloneAudioPolicyNote();
-  ui.soundPreset.value = "auto";
-  ui.musicPolicy.value = "auto";
+  selectOptionValue(ui.soundPreset, "auto", "auto");
+  selectOptionValue(ui.musicPolicy, "auto", "auto");
   ui.dialogue.value = "";
   ui.dialogueCount.textContent = "0";
   ui.soundscape.value = "";
@@ -1464,12 +1508,12 @@ async function reuseSelectedJob() {
     setMode(job.mode);
     setStyle(job.style);
     setPromptValue(job.prompt);
-    ui.quality.value = String(job.steps);
+    selectNearestNumericOption(ui.quality, job.steps, "20");
     selectNearestResolution(job.width, job.height);
-    ui.duration.value = String(job.num_frames);
+    selectOptionValue(ui.duration, job.num_frames, "124");
     ui.seed.value = String(job.seed);
-    ui.acceleration.value = job.acceleration || job.acceleration_mode || "off";
-    ui.refImageSize.value = job.ref_image_size || "match";
+    selectOptionValue(ui.acceleration, job.acceleration || job.acceleration_mode, "community");
+    selectOptionValue(ui.refImageSize, job.ref_image_size, "match");
     const audioPolicyMessage = restoreAudioPrompt(job);
     const attachmentMessage = applyReusedJobAttachments(job, files);
     syncPromptModeControls();

@@ -41,6 +41,11 @@ from .job_manager import (
     community_planner_status,
     utc_now,
 )
+from .community_prompt_planner import (
+    CommunityPromptPlannerError,
+    has_explicit_source_dialogue,
+    preflight_source_references,
+)
 from .resolutions import resolution_catalog
 
 
@@ -76,10 +81,6 @@ _ADVANCED_AUDIO_CONTROL_RE = re.compile(
     r"^(?:subject_definitions|summary|retention_analysis|detailed_description|"
     r"integrated_multimodal_description|overall_soundscape|non_diegetic_music)\s*:",
     re.IGNORECASE | re.MULTILINE,
-)
-_LIKELY_EXPLICIT_DIALOGUE_RE = re.compile(
-    r"「[^」\r\n]+」|『[^』\r\n]+』|“[^”\r\n]+”|"
-    r'"[^"\r\n]+"'
 )
 _FORBIDDEN_DIALOGUE_CONTROL_RE = re.compile(
     r"</?d(?:\s[^>]*)?>|<\|[^>\r\n]+\|>|"
@@ -596,11 +597,56 @@ async def create_job(
         reference_audio_count = sum(
             1 for item in reference_meta if item.get("kind") == "audio"
         )
-        raw_reference_diagnostics = _validate_reference_tags(
-            "\n".join(part for part in (prompt, dialogue) if part),
-            mode=mode,
-            references=reference_meta,
+        source_reference_text = "\n".join(
+            part for part in (prompt, dialogue) if part
         )
+        community_reference_tags: tuple[str, ...] = ()
+        if prompt_processing_mode == "community":
+            try:
+                community_reference_preflight = preflight_source_references(
+                    source_reference_text,
+                    reference_inventory=reference_meta,
+                    mode=mode,
+                )
+                community_reference_tags = community_reference_preflight.canonical_tags
+                # Keep the old control-token gate for community too, but run
+                # it over a transient canonical copy.  The persisted source
+                # and the prompt sent to the worker remain byte-for-byte
+                # authored text; only repairable reference spellings are
+                # canonicalized for this read-only entry check.
+                validation_source = source_reference_text
+                for start, end, reference in reversed(
+                    community_reference_preflight.occurrences
+                ):
+                    validation_source = (
+                        validation_source[:start]
+                        + reference.label
+                        + validation_source[end:]
+                    )
+                raw_reference_diagnostics = _validate_reference_tags(
+                    validation_source,
+                    mode=mode,
+                    references=reference_meta,
+                )
+            except CommunityPromptPlannerError as exc:
+                code = str(getattr(exc, "code", ""))
+                status_code = (
+                    409
+                    if code
+                    in {
+                        "SOURCE_REFERENCE_NOT_IN_INVENTORY",
+                        "SOURCE_REFERENCE_NOT_ALLOWED_FOR_MODE",
+                    }
+                    else 400
+                )
+                raise HTTPException(status_code, str(exc)) from exc
+        else:
+            # raw_en remains the strict, byte-preserving native escape hatch.
+            raw_reference_diagnostics = _validate_reference_tags(
+                source_reference_text,
+                mode=mode,
+                references=reference_meta,
+            )
         if raw_reference_diagnostics:
             diagnostic = raw_reference_diagnostics[0]
             status_code = (
@@ -610,8 +656,10 @@ async def create_job(
             )
             raise HTTPException(status_code, str(diagnostic.get("message")))
         effective_prompt = prompt
-        has_explicit_dialogue = bool(
-            dialogue.strip() or _LIKELY_EXPLICIT_DIALOGUE_RE.search(prompt)
+        has_explicit_dialogue = has_explicit_source_dialogue(
+            prompt,
+            prompt_processing_mode=prompt_processing_mode,
+            dialogue=dialogue,
         )
         if prompt_processing_mode == "raw_en":
             if any(
@@ -684,10 +732,17 @@ async def create_job(
             if exclude_reference_audio
             else []
         )
-        if exclude_reference_audio and re.search(
-            r"<Audio\s+[1-9][0-9]*>",
-            "\n".join(part for part in (effective_prompt, dialogue) if part),
-        ):
+        orphan_audio_reference = (
+            any(tag.startswith("<Audio ") for tag in community_reference_tags)
+            if prompt_processing_mode == "community"
+            else bool(
+                re.search(
+                    r"<Audio\s+[1-9][0-9]*>",
+                    "\n".join(part for part in (effective_prompt, dialogue) if part),
+                )
+            )
+        )
+        if exclude_reference_audio and orphan_audio_reference:
             raise HTTPException(
                 409,
                 "指定台詞を優先するとstandalone AudioはH3条件から外れますが、"

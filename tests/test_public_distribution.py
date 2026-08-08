@@ -132,7 +132,7 @@ class PublicDistributionTests(unittest.TestCase):
             with self.subTest(label=label):
                 self.assertIn(label, html)
                 self.assertIn(label, app)
-        self.assertIn('ui.acceleration.value = "community"', app)
+        self.assertIn('selectOptionValue(ui.acceleration, "community", "off");', app)
         self.assertNotIn('id="prompt-processing-mode"', html)
         self.assertNotIn('promptProcessingMode', app)
         self.assertNotIn('id="weight-warning"', html)
@@ -142,6 +142,33 @@ class PublicDistributionTests(unittest.TestCase):
         self.assertIn("Draft（12 steps未満）では自動的に高速化なし", app)
         self.assertNotIn("EasyCache 公開例", app)
         self.assertNotIn("EasyCache 高速", app)
+
+    def test_thumbnails_and_upload_previews_preserve_aspect_ratio_without_cropping(self) -> None:
+        css = (ROOT / "webui/static/app.css").read_text(encoding="utf-8")
+
+        self.assertRegex(css, r"(?s)\.history-thumb\s*\{.*?aspect-ratio:\s*16\s*/\s*9;.*?\}")
+        self.assertRegex(css, r"(?s)\.history-thumb img\s*\{.*?object-fit:\s*contain;.*?\}")
+        self.assertRegex(css, r"(?s)\.upload-preview img\s*\{.*?object-fit:\s*contain;.*?\}")
+        self.assertRegex(css, r"(?s)\.upload-preview video\s*\{.*?object-fit:\s*contain;.*?\}")
+
+    def test_quality_options_remain_without_high_resolution_load_warning_copy(self) -> None:
+        html = (ROOT / "webui/static/index.html").read_text(encoding="utf-8")
+        app = (ROOT / "webui/static/app.js").read_text(encoding="utf-8")
+        css = (ROOT / "webui/static/app.css").read_text(encoding="utf-8")
+        combined = "\n".join((html, app, css))
+
+        self.assertIn('id="ref-image-size"', html)
+        self.assertIn('value="match"', html)
+        self.assertIn('value="max"', html)
+        self.assertIn("元画像の細部を活かして解析します。", app)
+        self.assertIn("出力面積に合わせて解析します。", app)
+        self.assertNotIn("attentionが重くなる", combined)
+        self.assertNotIn("参照処理の負荷", combined)
+        self.assertNotIn("負荷も抑えられます", combined)
+        self.assertNotIn("high-precision", combined)
+        self.assertNotIn("weight-warning", combined)
+        self.assertIn('const FIXED_PROMPT_PROCESSING_MODE = "community";', app)
+        self.assertIn('data.append("prompt_processing_mode", FIXED_PROMPT_PROCESSING_MODE);', app)
 
     def test_settings_and_prompt_reuse_restores_saved_attachments_in_order(self) -> None:
         app = (ROOT / "webui/static/app.js").read_text(encoding="utf-8")
@@ -153,6 +180,20 @@ class PublicDistributionTests(unittest.TestCase):
         self.assertIn('setFrameFile("last", files[1]);', app)
         self.assertIn("Duplicate entries intentionally remain separate Files.", app)
         self.assertIn("await downloadReusableJobAttachments(job)", app)
+
+    def test_stale_select_values_cannot_break_summary_or_reuse(self) -> None:
+        app = (ROOT / "webui/static/app.js").read_text(encoding="utf-8")
+
+        self.assertIn('function selectedOption(select, fallbackValue = "")', app)
+        self.assertIn('const qualityOption = selectedOption(ui.quality, "20");', app)
+        self.assertIn('const durationOption = selectedOption(ui.duration, "124");', app)
+        self.assertIn('selectNearestNumericOption(ui.quality, job.steps, "20");', app)
+        self.assertIn('selectOptionValue(ui.duration, job.num_frames, "124");', app)
+        self.assertIn('selectOptionValue(ui.acceleration, job.acceleration || job.acceleration_mode, "community");', app)
+        self.assertIn('selectOptionValue(ui.refImageSize, job.ref_image_size, "match");', app)
+        self.assertIn("if (!aspect) return null;", app)
+        self.assertNotIn("ui.quality.options[ui.quality.selectedIndex].text", app)
+        self.assertNotIn("ui.duration.options[ui.duration.selectedIndex].text", app)
 
     def test_product_brand_is_niku_h_studio(self) -> None:
         html = (ROOT / "webui/static/index.html").read_text(encoding="utf-8")
