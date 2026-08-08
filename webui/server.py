@@ -639,7 +639,15 @@ async def create_job(
                     }
                     else 400
                 )
-                raise HTTPException(status_code, str(exc)) from exc
+                detail = {
+                    "SOURCE_REFERENCE_NOT_IN_INVENTORY":
+                        "プロンプトの参照タグに対応する素材が添付されていません。",
+                    "SOURCE_REFERENCE_NOT_ALLOWED_FOR_MODE":
+                        "この生成モードでは使用できない参照タグがあります。",
+                    "SOURCE_REFERENCE_TAG_UNSUPPORTED":
+                        "対応していない参照タグの綴りまたは番号が含まれています。",
+                }.get(code, "プロンプトの参照タグを解釈できませんでした。")
+                raise HTTPException(status_code, detail) from exc
         else:
             # raw_en remains the strict, byte-preserving native escape hatch.
             raw_reference_diagnostics = _validate_reference_tags(

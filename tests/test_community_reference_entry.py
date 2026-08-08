@@ -177,20 +177,37 @@ class CommunityReferenceEntryTests(unittest.TestCase):
         self.assertEqual(request["prompt_processing_mode"], "community")
 
     def test_community_entry_rejects_invalid_and_missing_references_before_submit(self) -> None:
-        for token, expected_status in (
-            ("<Picture 0>", 400),
-            ("<Picture X>", 400),
-            ("<Picture 2>", 409),
+        for token, expected_status, expected_detail in (
+            (
+                "<Picture 0>",
+                400,
+                "対応していない参照タグの綴りまたは番号が含まれています。",
+            ),
+            (
+                "<Picture X>",
+                400,
+                "対応していない参照タグの綴りまたは番号が含まれています。",
+            ),
+            (
+                "<Picture 2>",
+                409,
+                "プロンプトの参照タグに対応する素材が添付されていません。",
+            ),
         ):
             with self.subTest(token=token):
                 response = self._post(prompt=f"Cut 1\n{token} appears.")
                 self.assertEqual(response.status_code, expected_status, response.text)
+                self.assertEqual(response.json()["detail"], expected_detail)
                 self.assertEqual(self.manager.submitted, [])
 
     def test_community_entry_rejects_kind_inventory_mismatch(self) -> None:
         response = self._post(prompt="Cut 1\n<Audio 1> is audible.")
 
         self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(
+            response.json()["detail"],
+            "プロンプトの参照タグに対応する素材が添付されていません。",
+        )
         self.assertEqual(self.manager.submitted, [])
 
     def test_community_entry_keeps_non_reference_control_gate(self) -> None:
