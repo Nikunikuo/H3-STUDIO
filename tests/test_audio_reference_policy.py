@@ -87,7 +87,15 @@ class StandaloneAudioPolicyTests(unittest.TestCase):
     def setUp(self) -> None:
         self.manager.submitted.clear()
 
-    def _post(self, *, prompt: str, policy: str | None, audio_count: int = 1):
+    def _post(
+        self,
+        *,
+        prompt: str,
+        policy: str | None,
+        audio_count: int = 1,
+        prompt_processing_mode: str = "raw_en",
+        dialogue: str = "",
+    ):
         form = {
             "mode": "omni",
             "style": "natural",
@@ -99,9 +107,9 @@ class StandaloneAudioPolicyTests(unittest.TestCase):
             "seed": "424242",
             "acceleration": "off",
             "ref_image_size": "match",
-            "prompt_processing_mode": "raw_en",
+            "prompt_processing_mode": prompt_processing_mode,
             "audio_preset": "auto",
-            "dialogue": "",
+            "dialogue": dialogue,
             "soundscape": "",
             "music_policy": "auto",
             "audio_gain_db": "0",
@@ -257,6 +265,85 @@ class StandaloneAudioPolicyTests(unittest.TestCase):
             "AUDIO_POLICY_NORMALIZED_TO_FULL_CONTENT_WITHOUT_DIALOGUE",
             request["prompt_processing"]["diagnostics"],
         )
+
+    def test_community_title_and_production_quotes_do_not_trigger_dialogue_policy(self) -> None:
+        prompt = (
+            "Cut 1\n"
+            "<Picture 1>を中心に、完成した「ファイナリーちゃん」のロゴを表示する。\n"
+            "演出「古代紋章の覚醒」とタイトル「ファイナリーちゃん」を画面の基準にする。\n"
+            "禁止事項:「字幕」は入れない。"
+        )
+        response = self._post(
+            prompt=prompt,
+            policy=None,
+            prompt_processing_mode="community",
+        )
+
+        self.assertEqual(response.status_code, 200, response.text)
+        request = self._request()
+        self.assertEqual(request["prompt_processing"]["dialogue_count"], 0)
+        self.assertEqual(request["prompt_processing"]["dialogue_policy"], "none")
+        self.assertEqual(request["standalone_audio_policy_requested"], "full_content")
+        self.assertEqual(request["standalone_audio_policy_effective"], "full_content")
+        self.assertTrue(request["standalone_audio_conditioning"])
+        self.assertEqual(
+            [item["kind"] for item in request["references"]],
+            ["image", "audio"],
+        )
+
+    def test_community_named_and_attributed_japanese_dialogue_requires_policy(self) -> None:
+        prompt = (
+            "Cut 1\n"
+            "メイコ「行くよ！」\n"
+            "少女が「ここは任せて」と叫ぶ。"
+        )
+        missing_policy = self._post(
+            prompt=prompt,
+            policy=None,
+            prompt_processing_mode="community",
+        )
+        self.assertEqual(missing_policy.status_code, 409, missing_policy.text)
+        self.assertEqual(self.manager.submitted, [])
+
+        response = self._post(
+            prompt=prompt,
+            policy="full_content",
+            prompt_processing_mode="community",
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        request = self._request()
+        self.assertEqual(request["prompt_processing"]["dialogue_count"], 1)
+        self.assertEqual(request["prompt_processing"]["dialogue_policy"], "ordinary_quote")
+        self.assertTrue(request["standalone_audio_conditioning"])
+
+    def test_raw_en_keeps_conservative_any_quote_behavior(self) -> None:
+        prompt = 'Cut 1\nThe title reads "Final Niku-chan" in a fixed logo.'
+        response = self._post(prompt=prompt, policy=None, prompt_processing_mode="raw_en")
+
+        self.assertEqual(response.status_code, 409, response.text)
+        self.assertEqual(self.manager.submitted, [])
+
+    def test_separate_dialogue_field_is_authoritative_in_community_mode(self) -> None:
+        prompt = "Cut 1\n<Picture 1> faces the camera without speaking."
+        missing_policy = self._post(
+            prompt=prompt,
+            policy=None,
+            prompt_processing_mode="community",
+            dialogue="こんにちは。",
+        )
+        self.assertEqual(missing_policy.status_code, 409, missing_policy.text)
+        self.assertEqual(self.manager.submitted, [])
+
+        response = self._post(
+            prompt=prompt,
+            policy="full_content",
+            prompt_processing_mode="community",
+            dialogue="こんにちは。",
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        request = self._request()
+        self.assertEqual(request["prompt_processing"]["dialogue_count"], 1)
+        self.assertEqual(request["prompt_processing"]["dialogue_policy"], "ordinary_quote")
 
 
 if __name__ == "__main__":

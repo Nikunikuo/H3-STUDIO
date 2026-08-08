@@ -21,6 +21,7 @@ from webui.community_prompt_planner import (
     MODEL_RELATIVE_PATH,
     MODEL_REVISION,
     CommunityPromptPlannerError,
+    PreparedPlannerInput,
     build_model_messages,
     compile_model_result,
     prepare_planner_input,
@@ -32,6 +33,18 @@ LOGGER = logging.getLogger("h3-studio-community-prompt-worker")
 DEFAULT_MAX_NEW_TOKENS = 1280
 MIN_MAX_NEW_TOKENS = 768
 MAX_MAX_NEW_TOKENS = 2048
+COMPACT_RETRY_OUTPUT_TOKEN_BUDGET = 750
+_JSON_SHAPE_RETRY_CODES = frozenset(
+    {
+        "MODEL_JSON_INVALID",
+        "EMPTY_MODEL_RESULT",
+        "NO_SHOTS",
+        "NO_OBJECT_JSON",
+        "MODEL_OUTPUT_TRUNCATED",
+        "MODEL_RESULT_TRUNCATED",
+        "JSON_TRUNCATED",
+    }
+)
 
 
 class QwenCommunityPromptPlanner:
@@ -258,8 +271,63 @@ def _parse_max_new_tokens(value: Any) -> int:
     return result
 
 
-def _retry_instruction(exc: CommunityPromptPlannerError) -> str:
+def _is_json_shape_failure(exc: CommunityPromptPlannerError) -> bool:
+    message = str(exc).casefold()
+    return exc.code in _JSON_SHAPE_RETRY_CODES or any(
+        marker in message
+        for marker in (
+            "no json object",
+            "no object",
+            "unterminated",
+            "truncat",
+            "unexpected end",
+            "end-of-input",
+        )
+    )
+
+
+def _retry_instruction(
+    exc: CommunityPromptPlannerError,
+    prepared: PreparedPlannerInput | None = None,
+) -> str:
     """Build a targeted correction without weakening the plan validator."""
+
+    if _is_json_shape_failure(exc):
+        instruction = (
+            f"REJECTED ({exc.code}): {exc}. Return a complete much shorter raw JSON object only, "
+            f"under {COMPACT_RETRY_OUTPUT_TOKEN_BUDGET} generated tokens. Use one short sentence "
+            "per string field; keep style and scene short; use at most 4 short ambient items "
+            "and at most 4 short foley items. No Markdown, preamble, trailing text, or commentary. "
+            "Close every JSON array with a closing bracket and every JSON object with closing "
+            "braces before stopping."
+        )
+        if prepared is not None and prepared.source_shot_numbers:
+            shot_count = len(prepared.source_shot_numbers)
+            instruction += (
+                f" Preserve exactly {shot_count} shot objects numbered 1..{shot_count} in source "
+                "order; do not merge/drop explicit source blocks."
+            )
+        else:
+            instruction += (
+                " Preserve the required shot order/count when explicit source blocks exist; "
+                "otherwise merge adjacent beats compactly while preserving chronological transitions."
+            )
+        if prepared is not None:
+            numeric_facts = ", ".join(
+                f"{fact.value} {fact.unit}" for fact in prepared.numeric_facts
+            ) or "none"
+            dialogue_ids = ", ".join(
+                str(item.dialogue_id) for item in prepared.dialogues
+            ) or "none"
+            instruction += (
+                f" Preserve all numeric facts and units exactly ({numeric_facts}) and all "
+                f"dialogue IDs exactly ({dialogue_ids})."
+            )
+        else:
+            instruction += (
+                " Preserve all numeric facts and units exactly, and preserve all dialogue IDs exactly."
+            )
+        return instruction
 
     instruction = (
         f"REJECTED ({exc.code}): {exc}. Return a corrected complete raw JSON object only. "
@@ -288,6 +356,12 @@ def _retry_instruction(exc: CommunityPromptPlannerError) -> str:
             " Restore every required numeric fact exactly as supplied, including the exact "
             "decimal duration and its unit. Repeat each required number verbatim in the "
             "style or scene field; do not round, convert, or omit any number."
+        )
+    elif exc.code in {"INVALID_SHOT_TIMING", "OVERLAPPING_SHOTS", "SHOT_TIMELINE_GAP"}:
+        instruction += (
+            " Give every Shot a positive time range. Start Shot 1 at 0 seconds, keep all "
+            "Shots chronological and non-overlapping, and end the final Shot at the exact "
+            "requested video duration."
         )
     return instruction
 
@@ -414,7 +488,7 @@ def process_request(
                     {"role": "assistant", "content": raw},
                     {
                         "role": "user",
-                        "content": _retry_instruction(exc),
+                        "content": _retry_instruction(exc, prepared),
                     },
                 ]
             )
@@ -454,7 +528,7 @@ def process_request(
         "plan": compiled.plan.to_dict(),
         "planner_metadata": metadata,
         "diagnostics": [
-            warning.to_dict() for warning in prepared.source_warnings
+            warning.to_dict() for warning in compiled.diagnostics()
         ],
     }
 

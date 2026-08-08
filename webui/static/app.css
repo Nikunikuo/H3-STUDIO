@@ -706,67 +706,6 @@ h2 {
   font-size: 18px;
 }
 
-.weight-warning {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  margin-top: 12px;
-  padding: 12px 14px;
-  border: 1px solid rgba(255, 120, 95, 0.2);
-  border-radius: 12px;
-  background: rgba(255, 120, 95, 0.07);
-}
-
-.weight-warning > span {
-  display: grid;
-  flex: 0 0 auto;
-  place-items: center;
-  width: 23px;
-  height: 23px;
-  border-radius: 50%;
-  color: #17100d;
-  background: var(--coral);
-  font-size: 11px;
-  font-weight: 900;
-}
-
-.weight-warning p {
-  margin: 0;
-  color: #d7b6af;
-  font-size: 10px;
-  line-height: 1.45;
-}
-
-.weight-warning-copy {
-  display: flex;
-  min-width: 0;
-  flex: 1 1 auto;
-  flex-direction: column;
-  gap: 3px;
-}
-
-.weight-warning-copy > strong {
-  color: #ffd0c7;
-  font-size: 10px;
-}
-
-.weight-warning button {
-  flex: 0 0 auto;
-  min-height: 32px;
-  padding: 0 11px;
-  border: 1px solid rgba(255, 120, 95, 0.28);
-  border-radius: 9px;
-  color: #ffd0c7;
-  background: rgba(255, 120, 95, 0.08);
-  cursor: pointer;
-  font-size: 8px;
-  font-weight: 800;
-}
-
-.weight-warning button:hover {
-  background: rgba(255, 120, 95, 0.14);
-}
-
 .frame-uploads {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -815,7 +754,13 @@ h2 {
 .upload-preview img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
+}
+
+.upload-preview video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .upload-symbol {
@@ -914,10 +859,6 @@ h2 {
   color: var(--muted);
   font-size: 8px;
   line-height: 1.55;
-}
-
-.reference-quality-field small.high-precision {
-  color: #ffc169;
 }
 
 .reference-helper {
@@ -1684,7 +1625,7 @@ h2 {
 
 .history-thumb {
   position: relative;
-  aspect-ratio: 16 / 10;
+  aspect-ratio: 16 / 9;
   overflow: hidden;
   background: linear-gradient(145deg, #232630, #111217);
 }
@@ -1692,7 +1633,7 @@ h2 {
 .history-thumb img {
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .history-status {
@@ -1836,15 +1777,6 @@ h2 {
   .seed-field,
   .acceleration-field {
     grid-column: auto;
-  }
-
-  .weight-warning {
-    align-items: flex-start;
-    flex-wrap: wrap;
-  }
-
-  .weight-warning button {
-    width: 100%;
   }
 
   .prompt-reuse-row {
